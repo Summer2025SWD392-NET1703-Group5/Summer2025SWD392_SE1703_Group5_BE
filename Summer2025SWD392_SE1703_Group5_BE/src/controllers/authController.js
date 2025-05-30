@@ -401,6 +401,109 @@ class AuthController {
             });
         }
     }
+
+    async resetPassword(req, res) {
+        try {
+            const email = req.body.Email || req.body.email;
+            if (!email) {
+                return res.status(400).json({ message: 'Vui lòng cung cấp địa chỉ email.', success: false });
+            }
+            await AuthService.initiatePasswordReset(email);
+            return res.json({ message: 'Nếu email của bạn tồn tại trong hệ thống, một liên kết đặt lại mật khẩu đã được gửi.', success: true });
+        } catch (err) {
+            logger.error(`[authController.resetPassword] Error: ${err.message}`);
+            if (err.message === 'Email không tồn tại trong hệ thống.') {
+                return res.status(404).json({ message: err.message, success: false });
+            }
+            return res.status(400).json({ message: err.message, success: false });
+        }
+    }
+    async showResetPasswordForm(req, res) {
+        const { token } = req.query;
+        try {
+            if (!token) {
+                return res.status(400).send(createHtmlResponse('Lỗi', 'Token không được cung cấp.', 'Vui lòng đảm bảo bạn đã nhấp vào liên kết chính xác từ email.'));
+            }
+            // Verify the token (AuthService will throw if invalid/expired)
+            await AuthService.verifyPasswordResetToken(token);
+
+
+            // If token is valid, send the HTML form
+            const htmlForm = `
+            <!DOCTYPE html>
+            <html lang="vi">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Đặt lại mật khẩu</title>
+                <style>
+                    body { font-family: Arial, sans-serif; background-color: #f4f4f4; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                    .container { background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+                    h2 { text-align: center; color: #333; margin-bottom: 25px; }
+                    .form-group { margin-bottom: 20px; }
+                    label { display: block; margin-bottom: 8px; color: #555; font-weight: bold; }
+                    input[type="password"] { width: calc(100% - 22px); padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+                    input[type="hidden"] { display: none; }
+                    button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; width: 100%; transition: background-color 0.3s ease; }
+                    button:hover { background-color: #0056b3; }
+                    .message { padding: 10px; margin-bottom:15px; border-radius:4px; text-align:center; }
+                    .message.error { background-color:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>Đặt lại mật khẩu</h2>
+                    <form action="/api/auth/perform-password-reset" method="POST">
+                        <input type="hidden" name="token" value="${token}">
+                        <div class="form-group">
+                            <label for="newPassword">Mật khẩu mới:</label>
+                            <input type="password" id="newPassword" name="newPassword" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmPassword">Xác nhận mật khẩu mới:</label>
+                            <input type="password" id="confirmPassword" name="confirmPassword" required>
+                        </div>
+                        <button type="submit">Cập nhật mật khẩu</button>
+                    </form>
+                </div>
+            </body>
+            </html>
+            `;
+            res.send(htmlForm);
+        } catch (error) {
+            logger.error(`[authController.showResetPasswordForm] Error: ${error.message}`);
+            res.status(400).send(createHtmlResponse('Lỗi xác thực Token', error.message, 'Token của bạn có thể không hợp lệ hoặc đã hết hạn. Vui lòng thử yêu cầu đặt lại mật khẩu một lần nữa.'));
+        }
+    }
+
+
+    // Route to handle the password reset form submission
+    async performPasswordReset(req, res) {
+        const { token, newPassword, confirmPassword } = req.body;
+        try {
+            if (!token || !newPassword || !confirmPassword) {
+                return res.status(400).send(createHtmlResponse('Lỗi', 'Thiếu thông tin.', 'Vui lòng điền đầy đủ các trường.', null, `/api/auth/reset-password-form?token=${token}`));
+            }
+            if (newPassword !== confirmPassword) {
+                return res.status(400).send(createHtmlResponse('Lỗi', 'Mật khẩu không khớp.', 'Mật khẩu mới và xác nhận mật khẩu phải giống nhau.', null, `/api/auth/reset-password-form?token=${token}`));
+            }
+            // Add password complexity requirements if any (e.g., length)
+            if (newPassword.length < 6) { // Example: Minimum 6 characters
+                return res.status(400).send(createHtmlResponse('Lỗi', 'Mật khẩu không đủ mạnh.', 'Mật khẩu mới phải có ít nhất 6 ký tự.', null, `/api/auth/reset-password-form?token=${token}`));
+            }
+
+
+            await AuthService.completePasswordReset(token, newPassword);
+            res.send(createHtmlResponse('Thành công!', 'Mật khẩu đã được đặt lại thành công.', 'Bây giờ bạn có thể đăng nhập bằng mật khẩu mới của mình.', null, process.env.CLIENT_LOGIN_URL || 'http://localhost:5173/login'));
+        } catch (error) {
+            logger.error(`[authController.performPasswordReset] Error: ${error.message}`);
+            res.status(400).send(createHtmlResponse('Lỗi đặt lại mật khẩu', error.message, 'Đã có lỗi xảy ra trong quá trình đặt lại mật khẩu. Token có thể đã hết hạn hoặc không hợp lệ.', null, `/api/auth/reset-password-form?token=${token}`));
+        }
+    }
+
+
+
+
 }
 function createHtmlResponse(title, message, description, isSuccess = true, redirectUrl = null, redirectDelay = 3000) {
     const successColor = '#28a745'; // Green for success
