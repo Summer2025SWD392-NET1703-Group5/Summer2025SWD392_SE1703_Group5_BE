@@ -271,6 +271,33 @@ router.put('/password', authMiddleware, authController.changePassword);
  *       401:
  *         description: Chưa đăng nhập.
  */
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Yêu cầu reset mật khẩu (gửi token qua email)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - Email
+ *             properties:
+ *               Email:
+ *                 type: string
+ *                 format: email
+ *                 example: nguyenvana@example.com
+ *     responses:
+ *       200:
+ *         description: Yêu cầu reset mật khẩu đã được gửi.
+ *       400:
+ *         description: Email không tồn tại hoặc lỗi khác.
+ */
+router.post('/reset-password', authController.resetPassword);
 router.get('/profile', authMiddleware, authController.getUserProfile);
 router.put('/profile', authMiddleware, authController.updateProfile);
 
