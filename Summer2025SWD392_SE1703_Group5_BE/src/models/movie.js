@@ -5,8 +5,8 @@ module.exports = (sequelize, DataTypes) => {
   class Movie extends Model {
     static associate(models) {
       Movie.belongsTo(models.User, { foreignKey: 'Created_By', as: 'CreatedBy' });
-    //   Movie.hasMany(models.Showtime, { foreignKey: 'Movie_ID', as: 'Showtimes' });
-    //   Movie.hasMany(models.MovieRating, { foreignKey: 'Movie_ID', as: 'MovieRatings' });
+      Movie.hasMany(models.Showtime, { foreignKey: 'Movie_ID', as: 'Showtimes' });
+      Movie.hasMany(models.MovieRating, { foreignKey: 'Movie_ID', as: 'MovieRatings' });
     }
   }
   Movie.init({
@@ -54,6 +54,3 @@ module.exports = (sequelize, DataTypes) => {
   });
   return Movie;
 };
-
-
-
