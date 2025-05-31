@@ -408,6 +408,126 @@ const AuthService = {
             throw error; // Re-throw để controller có thể handle
         }
     },
+    async initiatePasswordReset(Email) {
+        logger.info(`[AuthService.initiatePasswordReset] Initiating password reset for email: ${Email}`);
+        if (!Email) {
+            throw new Error('Địa chỉ email không được để trống.');
+        }
+
+
+        const user = await User.findOne({ where: { Email } });
+        if (!user) {
+            // For security, typically you might not want to reveal if an email exists.
+            // However, for user experience during reset, sometimes it's better to be clear.
+            // Or, the controller can handle the generic message.
+            logger.warn(`[AuthService.initiatePasswordReset] User not found with email: ${Email}`);
+            throw new Error('Email không tồn tại trong hệ thống.');
+        }
+
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenCacheKey = `password_reset_token_${token}`;
+        // Store token with user ID and email, expires in 1 hour (3600 seconds)
+        const tokenExpirySeconds = parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || '60', 10) * 60;
+
+
+        cache.set(tokenCacheKey, { userId: user.User_ID, email: user.Email }, tokenExpirySeconds);
+        logger.info(`[AuthService.initiatePasswordReset] Password reset token generated and cached for user ${user.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
+
+
+        // Construct reset URL to point to the backend-served form
+        const apiBaseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+        const resetUrl = `${apiBaseUrl}/api/auth/reset-password-form?token=${token}`;
+
+
+        // We need an EmailService instance to send the email.
+        // EmailVerificationService has one: EmailVerificationService.emailServiceInstance
+        // Ensure EmailService has a sendPasswordResetEmailAsync method.
+        try {
+            // Assuming EmailService will have a method like this:
+            // It will be created in the next step.
+            const emailSent = await EmailVerificationService.emailServiceInstance.sendPasswordResetEmailAsync(
+                user.Email,
+                user.Full_Name,
+                resetUrl
+            );
+
+
+            if (emailSent) {
+                logger.info(`[AuthService.initiatePasswordReset] Password reset email sent successfully to: ${user.Email}`);
+            } else {
+                logger.error(`[AuthService.initiatePasswordReset] Failed to send password reset email to: ${user.Email}. EmailService returned false.`);
+                // Even if email fails, don't necessarily throw an error that reveals too much to the client here.
+                // The controller will give a generic success.
+                // Consider internal alerting for failed email sends.
+            }
+        } catch (error) {
+            logger.error(`[AuthService.initiatePasswordReset] Error sending password reset email: ${error.message}`, error);
+            // As above, avoid throwing an error that stops the generic success message in controller
+        }
+
+
+        return true; // Indicates process initiated. Controller gives generic message.
+    },
+
+    async verifyPasswordResetToken(token) {
+        logger.info(`[AuthService.verifyPasswordResetToken] Verifying token: ${token ? token.substring(0, 10) + '...' : 'null'}`);
+        if (!token) {
+            throw new Error('Token không hợp lệ hoặc đã hết hạn.');
+        }
+        const tokenCacheKey = `password_reset_token_${token}`;
+        const storedData = cache.get(tokenCacheKey);
+
+
+        if (!storedData) {
+            logger.warn(`[AuthService.verifyPasswordResetToken] Token not found in cache or expired. Key: ${tokenCacheKey}`);
+            throw new Error('Token không hợp lệ hoặc đã hết hạn.');
+        }
+        logger.info(`[AuthService.verifyPasswordResetToken] Token valid for user ID: ${storedData.userId}`);
+        return { userId: storedData.userId, email: storedData.email }; // Return user info
+    },
+    async completePasswordReset(token, newPassword) {
+        logger.info(`[AuthService.completePasswordReset] Attempting to complete password reset with token: ${token ? token.substring(0, 10) + '...' : 'null'}`);
+        const tokenData = await this.verifyPasswordResetToken(token); //This will throw if token is invalid
+
+
+        const user = await User.findByPk(tokenData.userId);
+        if (!user) {
+            logger.error(`[AuthService.completePasswordReset] User not found with ID from token: ${tokenData.userId}`);
+            throw new Error('Người dùng không tồn tại.'); // Should not happen if token was valid
+        }
+
+
+        user.Password = await hashPassword(newPassword);
+        await user.save();
+        logger.info(`[AuthService.completePasswordReset] Password updated successfully for user ID: ${user.User_ID}`);
+
+
+        // Invalidate the token
+        const tokenCacheKey = `password_reset_token_${token}`;
+        cache.del(tokenCacheKey);
+        logger.info(`[AuthService.completePasswordReset] Password reset token invalidated. Key: ${tokenCacheKey}`);
+
+
+        // Optionally, send a confirmation email that password was changed
+        try {
+            // Assuming EmailService will have a method like this:
+            await EmailVerificationService.emailServiceInstance.sendPasswordChangedConfirmationEmailAsync(
+                user.Email,
+                user.Full_Name
+            );
+            logger.info(`[AuthService.completePasswordReset] Password change confirmation email sent to: ${user.Email}`);
+        } catch (emailError) {
+            logger.error(`[AuthService.completePasswordReset] Failed to send password change confirmation email: ${emailError.message}`);
+        }
+
+
+        return { success: true, message: 'Đặt lại mật khẩu thành công.' };
+    },
+
+
+
+
 
     // Cập nhật profile
     async updateProfile(userId, profileData) {
