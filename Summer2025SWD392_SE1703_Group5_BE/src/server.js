@@ -16,6 +16,7 @@ const swaggerSpec = require('./config/swaggerConfig');
 
 // Import các modules routes của ứng dụng
 const authRoutes = require('./routes/authRoutes');
+const showtimeRoutes = require('./routes/showtimeRoutes');
 
 
 // Import database connection
@@ -261,7 +262,7 @@ app.get('/health/detailed', async (req, res) => {
 
 // === Đăng ký Routes cho API ===
 app.use('/api/auth', authRoutes);
-
+app.use('/api/showtimes', showtimeRoutes);
 
 // Route cơ bản để kiểm tra server
 // app.get('/', (req, res) => {
