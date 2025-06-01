@@ -106,10 +106,6 @@ fs
         db[model.name] = model;
     });
 
-// Import models mới
-// db.Promotion = require('./promotion')(sequelize, Sequelize.DataTypes);
-// db.PromotionUsage = require('./promotionUsage')(sequelize, Sequelize.DataTypes);
-
 // Thiết lập associations
 Object.keys(db).forEach(modelName => {
     if (db[modelName].associate) {
@@ -121,5 +117,17 @@ db.sequelize = sequelize;
 db.Sequelize = Sequelize;
 
 console.log('[models/index.js] Sequelize models initialized and associated.');
+
+// Đồng bộ hóa models với database
+if (process.env.NODE_ENV !== 'production') {
+    console.log('[models/index.js] Syncing database models in non-production environment...');
+    sequelize.sync({ alter: true })
+        .then(() => {
+            console.log('[models/index.js] Database synchronized successfully.');
+        })
+        .catch(err => {
+            console.error('[models/index.js] Error synchronizing database:', err);
+        });
+}
 
 module.exports = db; 

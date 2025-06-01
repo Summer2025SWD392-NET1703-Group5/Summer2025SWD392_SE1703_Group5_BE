@@ -5,14 +5,14 @@ const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
   class User extends Model {
     static associate(models) {
-      // User.hasMany(models.TicketBooking, { foreignKey: 'User_ID', as: 'TicketBookings' });
+      User.hasMany(models.TicketBooking, { foreignKey: 'User_ID', as: 'TicketBookings' });
       User.hasMany(models.Movie, { foreignKey: 'Created_By', as: 'Movies' });
-      // User.hasMany(models.Promotion, { foreignKey: 'Created_By', as: 'Promotions' });
-      // User.hasMany(models.MovieRating, { foreignKey: 'User_ID', as: 'MovieRatings' });
-      // User.hasMany(models.Score, { foreignKey: 'User_ID', as: 'Scores' });
-      // User.hasMany(models.PointsRedemption, { foreignKey: 'User_ID', as: 'PointsRedemptions' });
-      // User.hasMany(models.PromotionUsage, { foreignKey: 'User_ID', as: 'PromotionUsages' });
-      // User.hasMany(models.Payment, { foreignKey: 'Processed_By', as: 'ProcessedPayments' });
+      User.hasMany(models.Promotion, { foreignKey: 'Created_By', as: 'Promotions' });
+      User.hasMany(models.MovieRating, { foreignKey: 'User_ID', as: 'MovieRatings' });
+      User.hasMany(models.Score, { foreignKey: 'User_ID', as: 'Scores' });
+      User.hasMany(models.PointsRedemption, { foreignKey: 'User_ID', as: 'PointsRedemptions' });
+      User.hasMany(models.PromotionUsage, { foreignKey: 'User_ID', as: 'PromotionUsages' });
+      User.hasMany(models.Payment, { foreignKey: 'Processed_By', as: 'ProcessedPayments' });
     }
 
     // ===== THÊM CÁC STATIC METHODS =====
@@ -122,7 +122,6 @@ module.exports = (sequelize, DataTypes) => {
     Email: {
       type: DataTypes.STRING(100),  // nvarchar(100)
       allowNull: false,
-      unique: true
     },
     Password: {
       type: DataTypes.STRING(100),  // nvarchar(100) - GIỚI HẠN 100 KÝ TỰ!
