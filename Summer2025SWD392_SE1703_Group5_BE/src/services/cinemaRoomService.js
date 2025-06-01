@@ -103,6 +103,43 @@ const cinemaRoomService = {
             CanDelete: upcomingShowtimes.length === 0
         };
     },
+
+    async createCinemaRoom(data) {
+        // Validate required fields
+        if (!data.RoomName) {
+            throw new Error('Room name is required');
+        }
+
+        if (!data.Capacity || data.Capacity <= 0) {
+            throw new Error('Valid capacity is required');
+        }
+
+        // Kiểm tra Cinema_ID đã được cung cấp chưa
+        if (!data.Cinema_ID) {
+            throw new Error('Cinema_ID is required');
+        }
+
+        // Check duplicate name (map RoomName to Room_Name for database query)
+        const existing = await CinemaRoom.findOne({
+            where: { Room_Name: data.RoomName }
+        });
+
+        if (existing) {
+            throw new Error(`Phòng chiếu với tên '${data.RoomName}' đã tồn tại`);
+        }
+
+        // Create room with proper field mapping
+        const room = await CinemaRoom.create({
+            Room_Name: data.RoomName,        // Map RoomName -> Room_Name
+            Room_Type: data.RoomType || '2D', // Default to 2D if not provided
+            Seat_Quantity: data.Capacity,    // Map Capacity -> Seat_Quantity
+            Status: data.Status || 'Active',
+            Notes: data.Description || '',   // Map Description -> Notes
+            Cinema_ID: data.Cinema_ID        // Sử dụng Cinema_ID được cung cấp
+        });
+
+        return buildRoomDTO(room, false);
+    },
 }
 
 module.exports = cinemaRoomService;
