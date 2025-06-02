@@ -13,6 +13,7 @@ module.exports = (sequelize, DataTypes) => {
       User.hasMany(models.PointsRedemption, { foreignKey: 'User_ID', as: 'PointsRedemptions' });
       User.hasMany(models.PromotionUsage, { foreignKey: 'User_ID', as: 'PromotionUsages' });
       User.hasMany(models.Payment, { foreignKey: 'Processed_By', as: 'ProcessedPayments' });
+      User.belongsTo(models.Cinema, { foreignKey: 'Cinema_ID', as: 'ManagedCinema' });
     }
 
     // ===== THÊM CÁC STATIC METHODS =====
@@ -169,6 +170,14 @@ module.exports = (sequelize, DataTypes) => {
     Last_Login: {
       type: DataTypes.DATE,         // datetime
       allowNull: true
+    },
+    Cinema_ID: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'Cinemas',
+        key: 'Cinema_ID'
+      }
     }
   }, {
     sequelize,
