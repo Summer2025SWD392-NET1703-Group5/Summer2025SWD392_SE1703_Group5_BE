@@ -9,6 +9,7 @@ module.exports = (sequelize, DataTypes) => {
       CinemaRoom.hasMany(models.SeatLayout, {
         foreignKey: 'Cinema_Room_ID'
       });
+      CinemaRoom.belongsTo(models.Cinema, { foreignKey: 'Cinema_ID', as: 'Cinema' });
     }
   }
   CinemaRoom.init({
@@ -28,6 +29,14 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'Active',
     },
     Notes: DataTypes.STRING,
+    Cinema_ID: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: 'Cinemas',
+        key: 'Cinema_ID'
+      }
+    }
   }, {
     sequelize,
     modelName: 'CinemaRoom',
