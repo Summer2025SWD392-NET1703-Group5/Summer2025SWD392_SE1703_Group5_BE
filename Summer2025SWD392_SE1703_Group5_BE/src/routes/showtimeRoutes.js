@@ -174,6 +174,65 @@ router.get('/:id', showtimeController.getShowtime);
  */
 router.post('/', authMiddleware, authorizeRoles('Admin', 'Manager'), showtimeController.createShowtime);
 
+/**
+ * @swagger
+ * /api/showtimes/{id}:
+ *   put:
+ *     summary: Cập nhật thông tin lịch chiếu
+ *     tags: [Showtimes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ShowtimeUpdate'
+ *     responses:
+ *       200:
+ *         description: Cập nhật thành công
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *       404:
+ *         description: Không tìm thấy lịch chiếu
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.put('/:id', authMiddleware, authorizeRoles('Admin', 'Manager'), showtimeController.updateShowtime);
+/**
+ * @swagger
+ * /api/showtimes/{id}:
+ *   delete:
+ *     summary: Ẩn lịch chiếu
+ *     tags: [Showtimes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *     responses:
+ *       200:
+ *         description: Ẩn thành công
+ *       400:
+ *         description: Có đơn đặt vé đang chờ
+ *       404:
+ *         description: Không tìm thấy lịch chiếu
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.delete('/:id', authMiddleware, authorizeRoles('Admin', 'Manager'), showtimeController.hideShowtime);
+
+
+
 
         module.exports = router;
 

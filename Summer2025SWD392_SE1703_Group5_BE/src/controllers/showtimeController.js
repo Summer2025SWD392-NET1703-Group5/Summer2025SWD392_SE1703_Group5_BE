@@ -130,6 +130,33 @@ class ShowtimesController {
             res.status(error.message.includes('xuất chiếu') ? 400 : 500).json({ message: error.message });
         }
     }
+
+    async updateShowtime(req, res) {
+        try {
+            if (!req.body) return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
+            const userId = req.user.id;
+            const result = await ShowtimeService.updateShowtime(req.params.id, req.body, userId);
+            if (!result) return res.status(404).json({ message: `Không tìm thấy lịch chiếu ID: ${req.params.id}` });
+            res.status(200).json(req.body);
+        } catch (error) {
+            logger.error(error);
+            res.status(error.message.includes('xuất chiếu') ? 400 : 500).json({ message: error.message });
+        }
+    }
+
+
+    async hideShowtime(req, res) {
+        try {
+            const userId = req.user.id;
+            const result = await ShowtimeService.hideShowtime(req.params.id, userId);
+            if (!result) return res.status(404).json({ message: `Không tìm thấy lịch chiếu ID: ${req.params.id}` });
+            res.status(200).json({ message: `Lịch chiếu ID: ${req.params.id} đã được ẩn thành công` });
+        } catch (error) {
+            logger.error(error);
+            res.status(error.message.includes('đơn đặt vé') ? 400 : 500).json({ message: error.message });
+        }
+    }
+
 }
 module.exports = new ShowtimesController();
 
