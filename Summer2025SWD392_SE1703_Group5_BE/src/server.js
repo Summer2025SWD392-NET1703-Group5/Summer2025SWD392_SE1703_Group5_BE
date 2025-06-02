@@ -17,8 +17,8 @@ const swaggerSpec = require('./config/swaggerConfig');
 // Import các modules routes của ứng dụng
 const authRoutes = require('./routes/authRoutes');
 const showtimeRoutes = require('./routes/showtimeRoutes');
-
-
+const cinemaRoomRoutes = require('./routes/cinemaRoomRoutes');
+const cinemaRoutes = require('./routes/cinemaRoutes');
 // Import database connection
 const { getConnection, testConnection } = require('./config/database');
 
@@ -263,7 +263,8 @@ app.get('/health/detailed', async (req, res) => {
 // === Đăng ký Routes cho API ===
 app.use('/api/auth', authRoutes);
 app.use('/api/showtimes', showtimeRoutes);
-
+app.use('/api/cinema-rooms', cinemaRoomRoutes);
+app.use('/api/cinemas', cinemaRoutes);
 // Route cơ bản để kiểm tra server
 // app.get('/', (req, res) => {
 //     res.status(200).json({
