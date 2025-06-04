@@ -165,5 +165,46 @@ router.get('/:id', cinemaController.getCinemaById);
  *         description: Không có quyền truy cập
  */
 router.post('/', authMiddleware, authorizeRoles('Admin', 'Manager'), cinemaController.createCinema);
+/**
+ * @swagger
+ * /api/cinemas/{id}:
+ *   put:
+ *     summary: Cập nhật thông tin rạp phim
+ *     tags: [Cinemas]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của rạp phim
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/Cinema'
+ *     responses:
+ *       200:
+ *         description: Rạp phim đã được cập nhật
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   $ref: '#/components/schemas/Cinema'
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *       404:
+ *         description: Không tìm thấy rạp phim
+ */
+router.put('/:id', authMiddleware, authorizeCinemaManager(), cinemaValidation.update, cinemaController.updateCinema);
 
 module.exports = router; 
