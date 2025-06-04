@@ -94,6 +94,48 @@ class CinemaController {
             });
         }
     }
+    async updateCinema(req, res) {
+        try {
+            const { id } = req.params;
+            const cinemaId = parseInt(id, 10);
+
+            if (isNaN(cinemaId) || cinemaId <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'ID rạp phim không hợp lệ'
+                });
+            }
+
+            // Log thêm thông tin về role của người dùng đang thực hiện cập nhật
+            logger.info(`CinemaController.updateCinema called for ID: ${cinemaId} by role: ${req.user.role} with body:`, req.body);
+
+            // Đảm bảo managers không thể cập nhật email
+            if (req.user.role === 'Manager' && req.body.Email !== undefined) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Managers không có quyền cập nhật email của rạp phim'
+                });
+            }
+
+            const result = await cinemaService.updateCinema(cinemaId, req.body);
+            res.status(200).json(result);
+        } catch (error) {
+            logger.error(`Lỗi trong CinemaController.updateCinema:`, error);
+
+            if (error.message === 'Không tìm thấy rạp phim') {
+                return res.status(404).json({
+                    success: false,
+                    message: error.message
+                });
+            }
+
+            res.status(500).json({
+                success: false,
+                message: error.message || 'Đã xảy ra lỗi khi cập nhật rạp phim'
+            });
+        }
+    }
+
 }
 
 module.exports = new CinemaController(); 

@@ -89,6 +89,36 @@ class CinemaService {
             logger.error('Lỗi trong CinemaService.getAllCinemas:', error);
             throw error;
         }
+
+    }
+    async updateCinema(cinemaId, updateData) {
+        try {
+            logger.info(`CinemaService.updateCinema called for ID: ${cinemaId} with data:`, updateData);
+
+            // Kiểm tra rạp phim tồn tại
+            const cinema = await CinemaRepository.findById(cinemaId);
+            if (!cinema) {
+                throw new Error('Không tìm thấy rạp phim');
+            }
+
+            // Cập nhật rạp phim
+            const updated = await CinemaRepository.update(cinemaId, updateData);
+            if (!updated) {
+                throw new Error('Cập nhật rạp phim thất bại');
+            }
+
+            // Lấy thông tin rạp phim sau khi cập nhật
+            const updatedCinema = await CinemaRepository.findById(cinemaId);
+
+            return {
+                success: true,
+                message: 'Cập nhật rạp phim thành công',
+                data: updatedCinema
+            };
+        } catch (error) {
+            logger.error(`Lỗi trong CinemaService.updateCinema cho ID ${cinemaId}:`, error);
+            throw error;
+        }
     }
 
 }
