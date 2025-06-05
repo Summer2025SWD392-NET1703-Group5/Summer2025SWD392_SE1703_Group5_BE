@@ -87,4 +87,36 @@ router.post(
     authorizeRoles('Admin', 'Staff', 'Manager'),
     cinemaRoomController.createCinemaRoom
 );
+/**
+ * @swagger
+ * /api/cinema-rooms/{id}:
+ *   delete:
+ *     summary: Xoá phòng chiếu (Chỉ Admin/Manager)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin, Manager xóa một phòng chiếu khỏi hệ thống.
+ *       Admin và Staff có thể xóa bất kỳ phòng nào, còn Manager chỉ có thể xóa phòng trong rạp họ quản lý.
+ *       Hành động này có thể là xóa cứng hoặc đánh dấu là đã xóa (soft delete), tùy thuộc vào cài đặt hệ thống.
+ *       Lưu ý: Không thể xóa phòng đang có lịch chiếu đã đặt.
+ *     tags: [CinemaRooms]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID phòng chiếu cần xóa
+ *     responses:
+ *       200:
+ *         description: Đã xoá phòng chiếu
+ */
+router.delete(
+    '/:id',
+    authMiddleware,
+    authorizeRoles('Admin', 'Manager'),
+    cinemaRoomController.deleteCinemaRoom
+);
+
+
 module.exports = router;

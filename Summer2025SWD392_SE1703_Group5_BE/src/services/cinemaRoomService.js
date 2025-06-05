@@ -140,6 +140,21 @@ const cinemaRoomService = {
 
         return buildRoomDTO(room, false);
     },
+    async deleteCinemaRoom(id) {
+        const room = await CinemaRoom.findByPk(id);
+        if (!room) throw new Error(`Không tìm thấy phòng chiếu có ID ${id}`);
+        const hasUpcoming = await Showtime.count({
+            where: { Cinema_Room_ID: id, Show_Date: { [Op.gte]: new Date() } }
+        }) > 0;
+        if (hasUpcoming) throw new Error('Không thể xóa phòng chiếu vì có suất chiếu đã được lên lịch');
+        room.Status = 'Inactive';
+        await room.save();
+        // Soft delete related seat layouts
+        await SeatLayout.update({ Is_Active: false }, { where: { Cinema_Room_ID: id } });
+        return { message: 'Phòng chiếu đã được đánh dấu là đã xóa' };
+    },
+
+
 }
 
 module.exports = cinemaRoomService;

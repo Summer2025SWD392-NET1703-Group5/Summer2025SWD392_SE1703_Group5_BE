@@ -4,6 +4,8 @@ const { body, param, query, validationResult } = require('express-validator');
 /**
  * Middleware xử lý lỗi validation
  */
+
+
 const handleValidationErrors = (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -21,6 +23,7 @@ const handleValidationErrors = (req, res, next) => {
     next();
 };
 
+
 // ==================== CINEMA VALIDATION ====================
 const cinemaValidation = {
     create: [
@@ -30,11 +33,13 @@ const cinemaValidation = {
             .isLength({ min: 3, max: 255 })
             .withMessage('Tên rạp phim phải từ 3-255 ký tự'),
 
+
         body('Address')
             .notEmpty()
             .withMessage('Địa chỉ không được để trống')
             .isLength({ min: 10, max: 500 })
             .withMessage('Địa chỉ phải từ 10-500 ký tự'),
+
 
         body('City')
             .notEmpty()
@@ -42,11 +47,13 @@ const cinemaValidation = {
             .isLength({ min: 2, max: 100 })
             .withMessage('Tên thành phố phải từ 2-100 ký tự'),
 
+
         body('Province')
             .notEmpty()
             .withMessage('Tỉnh/Thành phố không được để trống')
             .isLength({ min: 2, max: 100 })
             .withMessage('Tỉnh/Thành phố phải từ 2-100 ký tự'),
+
 
         body('Phone_Number')
             .notEmpty()
@@ -61,6 +68,7 @@ const cinemaValidation = {
                 return true;
             }),
 
+
         body('Email')
             .notEmpty()
             .withMessage('Email không được để trống')
@@ -70,18 +78,22 @@ const cinemaValidation = {
             .isLength({ max: 255 })
             .withMessage('Email không được quá 255 ký tự'),
 
+
         body('Description')
             .optional()
             .isLength({ max: 2000 })
             .withMessage('Mô tả không được quá 2000 ký tự'),
+
 
         body('Status')
             .optional()
             .isIn(['Active', 'Inactive', 'Under Maintenance', 'Closed'])
             .withMessage('Trạng thái phải là Active, Inactive, Under Maintenance hoặc Closed'),
 
+
         handleValidationErrors
     ],
+
 
     update: [
         param('id')
@@ -89,14 +101,17 @@ const cinemaValidation = {
             .withMessage('ID rạp phim phải là số nguyên dương')
             .toInt(),
 
+
         // Middleware xác định vai trò và áp dụng validation phù hợp
         (req, res, next) => {
             const role = req.user && req.user.role ? req.user.role : '';
+
 
             // Lưu vai trò vào request để sử dụng sau
             req.userRole = role;
             next();
         },
+
 
         // Các field chung cho cả Admin và Manager
         body('Cinema_Name')
@@ -104,20 +119,24 @@ const cinemaValidation = {
             .isLength({ min: 3, max: 255 })
             .withMessage('Tên rạp phim phải từ 3-255 ký tự'),
 
+
         body('Address')
             .optional()
             .isLength({ min: 10, max: 500 })
             .withMessage('Địa chỉ phải từ 10-500 ký tự'),
+
 
         body('City')
             .optional()
             .isLength({ min: 2, max: 100 })
             .withMessage('Tên thành phố phải từ 2-100 ký tự'),
 
+
         body('Province')
             .optional()
             .isLength({ min: 2, max: 100 })
             .withMessage('Tỉnh/Thành phố phải từ 2-100 ký tự'),
+
 
         body('Phone_Number')
             .optional()
@@ -132,15 +151,18 @@ const cinemaValidation = {
                 return true;
             }),
 
+
         body('Description')
             .optional()
             .isLength({ max: 2000 })
             .withMessage('Mô tả không được quá 2000 ký tự'),
 
+
         body('Status')
             .optional()
             .isIn(['Active', 'Inactive', 'Under Maintenance', 'Closed', 'Deleted'])
             .withMessage('Trạng thái không hợp lệ'),
+
 
         // Chỉ Admin mới được phép thay đổi email
         body('Email')
@@ -150,6 +172,7 @@ const cinemaValidation = {
                 if (req.userRole !== 'Admin' && value !== undefined) {
                     throw new Error('Chỉ Admin mới có quyền thay đổi email của rạp phim');
                 }
+
 
                 // Nếu là Admin, kiểm tra định dạng email
                 if (value !== undefined) {
@@ -161,11 +184,14 @@ const cinemaValidation = {
                     }
                 }
 
+
                 return true;
             }),
 
+
         handleValidationErrors
     ],
+
 
     getById: [
         param('id')
@@ -174,6 +200,7 @@ const cinemaValidation = {
             .toInt(),
         handleValidationErrors
     ],
+
 
     getByCity: [
         param('city')
@@ -191,6 +218,7 @@ const cinemaValidation = {
         handleValidationErrors
     ],
 
+
     delete: [
         param('id')
             .isInt({ min: 1 })
@@ -199,6 +227,8 @@ const cinemaValidation = {
         handleValidationErrors
     ]
 };
+
+
 
 // ==================== SEAT LAYOUT VALIDATION ====================
 const seatLayoutValidation = {
