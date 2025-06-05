@@ -101,3 +101,18 @@ exports.createCinemaRoom = async (req, res) => {
         res.status(500).json({ message: 'Có lỗi xảy ra khi tạo phòng chiếu mới' });
     }
 };
+exports.deleteCinemaRoom = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const result = await cinemaRoomService.deleteCinemaRoom(id);
+        res.json(result);
+    } catch (err) {
+        if (err instanceof Error && err.message) {
+            if (err.message.includes('không tồn tại')) return res.status(404).json({ message: err.message });
+            return res.status(400).json({ message: err.message });
+        }
+        console.error(err);
+        res.status(500).json({ message: 'Có lỗi xảy ra khi xóa phòng chiếu' });
+    }
+};
+

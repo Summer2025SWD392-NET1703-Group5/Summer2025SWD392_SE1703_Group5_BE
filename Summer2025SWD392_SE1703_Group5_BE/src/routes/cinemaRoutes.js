@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const cinemaController = require('../controllers/cinemaController');
 const { authMiddleware, authorizeRoles, authorizeManager } = require('../middlewares/authMiddleware');
+const { cinemaValidation } = require('../middlewares/validation');
 
 /**
  * @swagger
@@ -205,6 +206,6 @@ router.post('/', authMiddleware, authorizeRoles('Admin', 'Manager'), cinemaContr
  *       404:
  *         description: Không tìm thấy rạp phim
  */
-router.put('/:id', authMiddleware, authorizeCinemaManager(), cinemaValidation.update, cinemaController.updateCinema);
+router.put('/:id', authMiddleware, authorizeManager(), cinemaValidation.update, cinemaController.updateCinema);
 
 module.exports = router; 
