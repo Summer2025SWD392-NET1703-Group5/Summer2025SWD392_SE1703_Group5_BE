@@ -422,6 +422,92 @@ router.get('/profile', authMiddleware, userController.getUserProfile);
  */
 router.put('/profile', authMiddleware, userController.updateProfile);
 
+/**
+ * @swagger
+ * /api/user/staff/assign:
+ *   post:
+ *     summary: Gán Staff cho một rạp phim
+ *     description: |
+ *       Route này dành cho Admin và Manager sử dụng.
+ *       Cho phép gán một Staff vào làm việc tại một rạp phim cụ thể.
+ *       Admin có thể gán bất kỳ Staff nào cho bất kỳ rạp nào.
+ *       Manager chỉ có thể gán Staff cho rạp mà họ quản lý.
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               staffId:
+ *                 type: integer
+ *                 description: ID của Staff
+ *               cinemaId:
+ *                 type: integer
+ *                 description: ID của rạp phim
+ *     responses:
+ *       200:
+ *         description: Staff đã được phân công cho rạp phim
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *       401:
+ *         description: Chưa đăng nhập
+ *       403:
+ *         description: Không có quyền phân công Staff cho rạp này
+ *       404:
+ *         description: Không tìm thấy Staff hoặc rạp phim
+ */
+router.post('/staff/assign', authMiddleware, authorizeRoles('Admin', 'Manager'), userController.assignStaffToCinema);
+
+/**
+ * @swagger
+ * /api/user/managers/assign:
+ *   post:
+ *     summary: Gán Manager cho một rạp phim (Chỉ Admin)
+ *     description: |
+ *       Route này chỉ dành cho Admin sử dụng.
+ *       Cho phép gán một Manager vào quản lý một rạp phim cụ thể.
+ *       Một Manager chỉ có thể quản lý một rạp tại một thời điểm.
+ *       Nếu Manager đã được gán vào rạp khác, sẽ được chuyển sang rạp mới.
+ *       Admin có thể gán bất kỳ Manager nào cho bất kỳ rạp nào.
+ *       Manager cấp cao chỉ có thể gán Manager cấp dưới cho rạp thuộc phạm vi quản lý của mình.
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               managerId:
+ *                 type: integer
+ *                 description: ID của Manager
+ *               cinemaId:
+ *                 type: integer
+ *                 description: ID của rạp phim
+ *     responses:
+ *       200:
+ *         description: Manager đã được gán cho rạp phim
+ *       400:
+ *         description: Dữ liệu không hợp lệ hoặc Manager đã được gán cho rạp khác
+ *       401:
+ *         description: Chưa đăng nhập
+ *       403:
+ *         description: Không có quyền gán Manager cho rạp này
+ *       404:
+ *         description: Không tìm thấy Manager hoặc rạp phim
+ */
+router.post('/managers/assign', authMiddleware, authorizeRoles('Admin'), userController.assignManagerToCinema);
+
+
+
+
+
 
 module.exports = router;
 
