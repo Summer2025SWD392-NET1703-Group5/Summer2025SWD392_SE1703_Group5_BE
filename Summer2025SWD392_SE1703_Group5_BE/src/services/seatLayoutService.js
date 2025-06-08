@@ -481,6 +481,161 @@ class SeatLayoutService {
             return { seat_types: [] };
         }
     }
+
+    /**
+     * Xóa mềm layout ghế
+     */
+    async softDeleteSeatLayouts(model, sequelize) {
+        if (!model.LayoutIds || model.LayoutIds.length === 0) {
+            throw new Error('Danh sách ghế cần xóa không được trống');
+        }
+
+
+        // Nếu không có sequelize được truyền vào, lấy từ models
+        if (!sequelize) {
+            const { sequelize: seq } = require('../models');
+            sequelize = seq;
+        }
+
+
+        // Import Op trực tiếp
+        const { Op } = require('sequelize');
+
+
+        // Kiểm tra có booking pending không
+        if (await this.hasPendingBookingsForLayouts(model.LayoutIds, sequelize)) {
+            return {
+                success: false,
+                message: 'Không thể xóa ghế vì có đơn đặt vé đang chờ thanh toán',
+                error_code: 'PENDING_BOOKINGS'
+            };
+        }
+
+
+        // Kiểm tra ghế có đang được sử dụng không
+        const usedLayoutIds = [];
+
+
+        try {
+            // Lấy tất cả Seat có Layout_ID trong model.LayoutIds
+            const seats = await Seat.findAll({
+                where: {
+                    Layout_ID: { [Op.in]: model.LayoutIds }
+                },
+                attributes: ['Seat_ID', 'Layout_ID']
+            });
+
+
+            if (seats.length > 0) {
+                // Lấy tất cả Seat_ID
+                const seatIds = seats.map(seat => seat.Seat_ID);
+
+
+                // Lập map từ Seat_ID đến Layout_ID
+                const seatToLayoutMap = {};
+                seats.forEach(seat => {
+                    seatToLayoutMap[seat.Seat_ID] = seat.Layout_ID;
+                });
+
+
+                // Kiểm tra các ghế có được sử dụng trong vé không
+                const usedSeats = await Ticket.findAll({
+                    where: {
+                        Seat_ID: { [Op.in]: seatIds },
+                        Status: { [Op.notIn]: ['Cancelled', 'Expired'] }
+                    },
+                    attributes: ['Seat_ID']
+                });
+
+
+                // Lấy Layout_ID của các ghế đã được sử dụng
+                usedSeats.forEach(ticket => {
+                    const layoutId = seatToLayoutMap[ticket.Seat_ID];
+                    if (layoutId && !usedLayoutIds.includes(layoutId)) {
+                        usedLayoutIds.push(layoutId);
+                    }
+                });
+            }
+        } catch (error) {
+            console.error('Lỗi khi kiểm tra ghế đang sử dụng:', error);
+        }
+
+
+        if (usedLayoutIds.length > 0) {
+            return {
+                success: false,
+                message: 'Một số layout ghế đã được sử dụng trong đặt vé và không thể xóa',
+                used_layouts: usedLayoutIds
+            };
+        }
+
+
+        const transaction = await sequelize.transaction();
+
+
+        try {
+            // Lấy các SeatLayout cần xóa mềm
+            const seatLayouts = await SeatLayout.findAll({
+                where: { Layout_ID: { [Op.in]: model.LayoutIds } },
+                transaction
+            });
+
+
+            if (seatLayouts.length === 0) {
+                throw new Error('Không tìm thấy layout ghế nào cần xóa');
+            }
+
+
+            // Cập nhật is_active = false thay vì xóa cứng
+            await SeatLayout.update(
+                { Is_Active: false },
+                {
+                    where: { Layout_ID: { [Op.in]: model.LayoutIds } },
+                    transaction
+                }
+            );
+
+
+            // Cập nhật tổng số ghế trong phòng
+            if (seatLayouts.length > 0) {
+                const roomId = seatLayouts[0].Cinema_Room_ID;
+                const activeSeatCount = await SeatLayout.count({
+                    where: {
+                        Cinema_Room_ID: roomId,
+                        Is_Active: true
+                    },
+                    transaction
+                });
+
+
+                await CinemaRoom.update(
+                    { Seat_Quantity: activeSeatCount },
+                    { where: { Cinema_Room_ID: roomId }, transaction }
+                );
+            }
+
+
+            await transaction.commit();
+
+
+            return {
+                success: true,
+                message: `Đã xóa mềm ${seatLayouts.length} layout ghế thành công`,
+                deleted_count: seatLayouts.length,
+                deleted_layouts: seatLayouts.map(sl => ({
+                    layout_id: sl.Layout_ID,
+                    row_label: sl.Row_Label,
+                    column_number: sl.Column_Number
+                }))
+            };
+
+
+        } catch (error) {
+            await transaction.rollback();
+            throw error;
+        }
+    }
+
 }
 
 module.exports = new SeatLayoutService();
