@@ -412,4 +412,72 @@ router.get('/seat-types', authMiddleware, seatLayoutController.getSeatTypes);
  */
 router.post('/bulk/:roomId', authMiddleware, seatLayoutController.bulkConfigureSeatLayout);
 
+
+
+/**
+ * @swagger
+ * /api/seat-layouts/bulk-delete:
+ *   delete:
+ *     summary: Xóa mềm hàng loạt layout ghế (Chỉ Admin/Manager)
+ *     description: >
+ *       API này cho phép người dùng có quyền Admin hoặc Manager vô hiệu hóa nhiều vị trí ghế cùng một lúc
+ *       bằng cách thực hiện xóa mềm (soft delete). Các ghế bị xóa mềm sẽ vẫn tồn tại trong cơ sở dữ liệu
+ *       nhưng không còn hiển thị trong sơ đồ ghế hoặc có thể được đặt vé.
+ *     tags: [SeatLayout]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/BulkDeleteLayouts'
+ *           example:
+ *             LayoutIds: [1, 2, 3, 4, 5]
+ *     responses:
+ *       200:
+ *         description: Xóa mềm layout ghế thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Đã xóa mềm 5 layout ghế thành công"
+ *                 deleted_count:
+ *                   type: integer
+ *                   example: 5
+ *                 deleted_layouts:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       layout_id:
+ *                         type: integer
+ *                         example: 1
+ *                       row_label:
+ *                         type: string
+ *                         example: "A"
+ *                       column_number:
+ *                         type: integer
+ *                         example: 1
+ *       400:
+ *         description: Dữ liệu đầu vào không hợp lệ
+ *       401:
+ *         description: Không có quyền truy cập
+ *       403:
+ *         description: Không có quyền thực hiện hành động này
+ *       404:
+ *         description: Không tìm thấy layout ghế
+ *       500:
+ *         description: Lỗi server
+ */
+router.delete('/bulk-delete', authMiddleware, seatLayoutController.softDeleteSeatLayouts);
+
+
+
 module.exports = router;
