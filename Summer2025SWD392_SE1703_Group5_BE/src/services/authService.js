@@ -5,18 +5,54 @@ const crypto = require('crypto');
 const { User } = require('../models');
 const sendMail = require('../services/emailService');
 const { v4: uuidv4 } = require('uuid');
+const moment = require('moment');
+const logger = require('../utils/logger');
+const appConfig = require('../config/appConfig');
+const EmailVerificationService = require('./emailVerificationService');
+const UserRepository = require('../repositories/userRepository');
 
 // THÊM IMPORT EMAIL VERIFICATION SERVICE
-const EmailVerificationService = require('../services/emailVerificationService');
 const AccountLockingService = require('../services/accountLockingService');
 const cache = require('../config/cache').get();
-const logger = require('../utils/logger');
+
+/**
+ * Tạo mật khẩu ngẫu nhiên
+ * @param {number} length - Độ dài mật khẩu (mặc định là 10)
+ * @returns {string} - Mật khẩu ngẫu nhiên
+ */
+function generateRandomPassword(length = 10) {
+    const uppercaseChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const lowercaseChars = 'abcdefghijklmnopqrstuvwxyz';
+    const numberChars = '0123456789';
+    const specialChars = '!@#$%^&*()_+{}|:<>?-=[]\\;\',./';
+
+    const allChars = uppercaseChars + lowercaseChars + numberChars + specialChars;
+
+    let password = '';
+
+    // Đảm bảo mật khẩu có ít nhất 1 ký tự viết hoa, 1 viết thường, 1 số và 1 ký tự đặc biệt
+    password += uppercaseChars.charAt(Math.floor(Math.random() * uppercaseChars.length));
+    password += lowercaseChars.charAt(Math.floor(Math.random() * lowercaseChars.length));
+    password += numberChars.charAt(Math.floor(Math.random() * numberChars.length));
+    password += specialChars.charAt(Math.floor(Math.random() * specialChars.length));
+
+    // Tạo các ký tự còn lại
+    for (let i = 4; i < length; i++) {
+        password += allChars.charAt(Math.floor(Math.random() * allChars.length));
+    }
+
+    // Trộn mật khẩu (Fisher-Yates shuffle)
+    password = password.split('').sort(() => 0.5 - Math.random()).join('');
+
+    return password;
+}
 
 /**
  * Helper: Hash password using bcrypt
  */
 async function hashPassword(password) {
-    return await bcrypt.hash(password, 10);
+    const saltRounds = 10;
+    return await bcrypt.hash(password, saltRounds);
 }
 
 /**
@@ -274,14 +310,14 @@ const AuthService = {
             if (await verifyPassword(Password, user.Password)) {
                 console.log(`[AuthService.login] Password verified for: ${Email}`);
 
-                if (user.Account_Status === 'Pending_Verification') {
-                    console.log(`[AuthService.login] Account pending verification: ${Email}`);
-                    throw new Error('Tài khoản của bạn chưa được xác thực. Vui lòng kiểm tra email và làm theo hướng dẫn.');
+                if (user.Account_Status === 'Inactive') {
+                    console.log(`[AuthService.login] Account inactive: ${Email}`);
+                    throw new Error('Tài khoản của bạn chưa được kích hoạt. Vui lòng kiểm tra email và làm theo hướng dẫn.');
                 }
 
-                if (user.Account_Status === 'Disabled' || user.Account_Status === 'Suspended') {
-                    console.log(`[AuthService.login] Account disabled/suspended: ${Email}, Status: ${user.Account_Status}`);
-                    throw new Error(`Tài khoản của bạn đang ở trạng thái ${user.Account_Status} và không thể đăng nhập.`);
+                if (user.Account_Status === 'Deleted') {
+                    console.log(`[AuthService.login] Account deleted: ${Email}`);
+                    throw new Error(`Tài khoản của bạn đã bị xóa và không thể đăng nhập.`);
                 }
 
                 // Reset failed attempts on successful login
@@ -330,6 +366,112 @@ const AuthService = {
             throw error;
         }
     },
+
+    async initiatePasswordReset(Email) {
+        logger.info(`[AuthService.initiatePasswordReset] Initiating password reset for email: ${Email}`);
+        if (!Email) {
+            throw new Error('Địa chỉ email không được để trống.');
+        }
+
+        const user = await User.findOne({ where: { Email } });
+        if (!user) {
+            // For security, typically you might not want to reveal if an email exists.
+            // However, for user experience during reset, sometimes it's better to be clear.
+            // Or, the controller can handle the generic message.
+            logger.warn(`[AuthService.initiatePasswordReset] User not found with email: ${Email}`);
+            throw new Error('Email không tồn tại trong hệ thống.');
+        }
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenCacheKey = `password_reset_token_${token}`;
+        // Store token with user ID and email, expires in 1 hour (3600 seconds)
+        const tokenExpirySeconds = parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || '60', 10) * 60;
+
+        cache.set(tokenCacheKey, { userId: user.User_ID, email: user.Email }, tokenExpirySeconds);
+        logger.info(`[AuthService.initiatePasswordReset] Password reset token generated and cached for user ${user.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
+
+        // Construct reset URL to point to the backend-served form
+        const apiBaseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+        const resetUrl = `${apiBaseUrl}/api/auth/reset-password-form?token=${token}`;
+
+        // We need an EmailService instance to send the email.
+        // EmailVerificationService has one: EmailVerificationService.emailServiceInstance
+        // Ensure EmailService has a sendPasswordResetEmailAsync method.
+        try {
+            // Assuming EmailService will have a method like this:
+            // It will be created in the next step.
+            const emailSent = await EmailVerificationService.emailServiceInstance.sendPasswordResetEmailAsync(
+                user.Email,
+                user.Full_Name,
+                resetUrl
+            );
+
+            if (emailSent) {
+                logger.info(`[AuthService.initiatePasswordReset] Password reset email sent successfully to: ${user.Email}`);
+            } else {
+                logger.error(`[AuthService.initiatePasswordReset] Failed to send password reset email to: ${user.Email}. EmailService returned false.`);
+                // Even if email fails, don't necessarily throw an error that reveals too much to the client here.
+                // The controller will give a generic success.
+                // Consider internal alerting for failed email sends.
+            }
+        } catch (error) {
+            logger.error(`[AuthService.initiatePasswordReset] Error sending password reset email: ${error.message}`, error);
+            // As above, avoid throwing an error that stops the generic success message in controller
+        }
+
+        return true; // Indicates process initiated. Controller gives generic message.
+    },
+
+    async verifyPasswordResetToken(token) {
+        logger.info(`[AuthService.verifyPasswordResetToken] Verifying token: ${token ? token.substring(0, 10) + '...' : 'null'}`);
+        if (!token) {
+            throw new Error('Token không hợp lệ hoặc đã hết hạn.');
+        }
+        const tokenCacheKey = `password_reset_token_${token}`;
+        const storedData = cache.get(tokenCacheKey);
+
+        if (!storedData) {
+            logger.warn(`[AuthService.verifyPasswordResetToken] Token not found in cache or expired. Key: ${tokenCacheKey}`);
+            throw new Error('Token không hợp lệ hoặc đã hết hạn.');
+        }
+        logger.info(`[AuthService.verifyPasswordResetToken] Token valid for user ID: ${storedData.userId}`);
+        return { userId: storedData.userId, email: storedData.email }; // Return user info
+    },
+
+    async completePasswordReset(token, newPassword) {
+        logger.info(`[AuthService.completePasswordReset] Attempting to complete password reset with token: ${token ? token.substring(0, 10) + '...' : 'null'}`);
+        const tokenData = await this.verifyPasswordResetToken(token); //This will throw if token is invalid
+
+        const user = await User.findByPk(tokenData.userId);
+        if (!user) {
+            logger.error(`[AuthService.completePasswordReset] User not found with ID from token: ${tokenData.userId}`);
+            throw new Error('Người dùng không tồn tại.'); // Should not happen if token was valid
+        }
+
+        user.Password = await hashPassword(newPassword);
+        await user.save();
+        logger.info(`[AuthService.completePasswordReset] Password updated successfully for user ID: ${user.User_ID}`);
+
+        // Invalidate the token
+        const tokenCacheKey = `password_reset_token_${token}`;
+        cache.del(tokenCacheKey);
+        logger.info(`[AuthService.completePasswordReset] Password reset token invalidated. Key: ${tokenCacheKey}`);
+
+        // Optionally, send a confirmation email that password was changed
+        try {
+            // Assuming EmailService will have a method like this:
+            await EmailVerificationService.emailServiceInstance.sendPasswordChangedConfirmationEmailAsync(
+                user.Email,
+                user.Full_Name
+            );
+            logger.info(`[AuthService.completePasswordReset] Password change confirmation email sent to: ${user.Email}`);
+        } catch (emailError) {
+            logger.error(`[AuthService.completePasswordReset] Failed to send password change confirmation email: ${emailError.message}`);
+        }
+
+        return { success: true, message: 'Đặt lại mật khẩu thành công.' };
+    },
+
     // Đổi mật khẩu
     async changePassword(userId, { oldPassword, newPassword }) {
         try {
@@ -408,126 +550,6 @@ const AuthService = {
             throw error; // Re-throw để controller có thể handle
         }
     },
-    async initiatePasswordReset(Email) {
-        logger.info(`[AuthService.initiatePasswordReset] Initiating password reset for email: ${Email}`);
-        if (!Email) {
-            throw new Error('Địa chỉ email không được để trống.');
-        }
-
-
-        const user = await User.findOne({ where: { Email } });
-        if (!user) {
-            // For security, typically you might not want to reveal if an email exists.
-            // However, for user experience during reset, sometimes it's better to be clear.
-            // Or, the controller can handle the generic message.
-            logger.warn(`[AuthService.initiatePasswordReset] User not found with email: ${Email}`);
-            throw new Error('Email không tồn tại trong hệ thống.');
-        }
-
-
-        const token = crypto.randomBytes(32).toString('hex');
-        const tokenCacheKey = `password_reset_token_${token}`;
-        // Store token with user ID and email, expires in 1 hour (3600 seconds)
-        const tokenExpirySeconds = parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || '60', 10) * 60;
-
-
-        cache.set(tokenCacheKey, { userId: user.User_ID, email: user.Email }, tokenExpirySeconds);
-        logger.info(`[AuthService.initiatePasswordReset] Password reset token generated and cached for user ${user.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
-
-
-        // Construct reset URL to point to the backend-served form
-        const apiBaseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
-        const resetUrl = `${apiBaseUrl}/api/auth/reset-password-form?token=${token}`;
-
-
-        // We need an EmailService instance to send the email.
-        // EmailVerificationService has one: EmailVerificationService.emailServiceInstance
-        // Ensure EmailService has a sendPasswordResetEmailAsync method.
-        try {
-            // Assuming EmailService will have a method like this:
-            // It will be created in the next step.
-            const emailSent = await EmailVerificationService.emailServiceInstance.sendPasswordResetEmailAsync(
-                user.Email,
-                user.Full_Name,
-                resetUrl
-            );
-
-
-            if (emailSent) {
-                logger.info(`[AuthService.initiatePasswordReset] Password reset email sent successfully to: ${user.Email}`);
-            } else {
-                logger.error(`[AuthService.initiatePasswordReset] Failed to send password reset email to: ${user.Email}. EmailService returned false.`);
-                // Even if email fails, don't necessarily throw an error that reveals too much to the client here.
-                // The controller will give a generic success.
-                // Consider internal alerting for failed email sends.
-            }
-        } catch (error) {
-            logger.error(`[AuthService.initiatePasswordReset] Error sending password reset email: ${error.message}`, error);
-            // As above, avoid throwing an error that stops the generic success message in controller
-        }
-
-
-        return true; // Indicates process initiated. Controller gives generic message.
-    },
-
-    async verifyPasswordResetToken(token) {
-        logger.info(`[AuthService.verifyPasswordResetToken] Verifying token: ${token ? token.substring(0, 10) + '...' : 'null'}`);
-        if (!token) {
-            throw new Error('Token không hợp lệ hoặc đã hết hạn.');
-        }
-        const tokenCacheKey = `password_reset_token_${token}`;
-        const storedData = cache.get(tokenCacheKey);
-
-
-        if (!storedData) {
-            logger.warn(`[AuthService.verifyPasswordResetToken] Token not found in cache or expired. Key: ${tokenCacheKey}`);
-            throw new Error('Token không hợp lệ hoặc đã hết hạn.');
-        }
-        logger.info(`[AuthService.verifyPasswordResetToken] Token valid for user ID: ${storedData.userId}`);
-        return { userId: storedData.userId, email: storedData.email }; // Return user info
-    },
-    async completePasswordReset(token, newPassword) {
-        logger.info(`[AuthService.completePasswordReset] Attempting to complete password reset with token: ${token ? token.substring(0, 10) + '...' : 'null'}`);
-        const tokenData = await this.verifyPasswordResetToken(token); //This will throw if token is invalid
-
-
-        const user = await User.findByPk(tokenData.userId);
-        if (!user) {
-            logger.error(`[AuthService.completePasswordReset] User not found with ID from token: ${tokenData.userId}`);
-            throw new Error('Người dùng không tồn tại.'); // Should not happen if token was valid
-        }
-
-
-        user.Password = await hashPassword(newPassword);
-        await user.save();
-        logger.info(`[AuthService.completePasswordReset] Password updated successfully for user ID: ${user.User_ID}`);
-
-
-        // Invalidate the token
-        const tokenCacheKey = `password_reset_token_${token}`;
-        cache.del(tokenCacheKey);
-        logger.info(`[AuthService.completePasswordReset] Password reset token invalidated. Key: ${tokenCacheKey}`);
-
-
-        // Optionally, send a confirmation email that password was changed
-        try {
-            // Assuming EmailService will have a method like this:
-            await EmailVerificationService.emailServiceInstance.sendPasswordChangedConfirmationEmailAsync(
-                user.Email,
-                user.Full_Name
-            );
-            logger.info(`[AuthService.completePasswordReset] Password change confirmation email sent to: ${user.Email}`);
-        } catch (emailError) {
-            logger.error(`[AuthService.completePasswordReset] Failed to send password change confirmation email: ${emailError.message}`);
-        }
-
-
-        return { success: true, message: 'Đặt lại mật khẩu thành công.' };
-    },
-
-
-
-
 
     // Cập nhật profile
     async updateProfile(userId, profileData) {
@@ -546,6 +568,396 @@ const AuthService = {
         });
         if (!user) throw new Error('Không tìm thấy người dùng');
         return user;
+    },
+
+    /**
+     * Đăng ký người dùng bởi Admin
+     * @param {Object} userData - Thông tin người dùng cần đăng ký
+     * @param {number} adminId - ID của Admin thực hiện đăng ký
+     * @returns {Promise<Object>} - Thông tin người dùng đã đăng ký
+     */
+    async registerUserByAdmin(userData, adminId) {
+        try {
+            logger.info('registerUserByAdmin called with userData:', userData);
+
+            // Xác thực Admin
+            const admin = await User.findByPk(adminId);
+            if (!admin || admin.Role !== 'Admin') {
+                throw new Error('Không có quyền thực hiện chức năng này');
+            }
+
+            // Validate các trường bắt buộc
+            if (!userData.Full_Name || !userData.Email) {
+                throw new Error('Họ tên và Email là bắt buộc');
+            }
+
+            // Validate email
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(userData.Email)) {
+                throw new Error('Email không hợp lệ');
+            }
+
+            // Validate số điện thoại (nếu có)
+            if (userData.Phone_Number) {
+                const phoneRegex = /^(0\d{9})$/;
+                if (!phoneRegex.test(userData.Phone_Number)) {
+                    throw new Error('Số điện thoại không hợp lệ. Phải có 10 số và bắt đầu bằng 0');
+                }
+
+                // Kiểm tra số điện thoại đã tồn tại trong database hay chưa
+                const phoneExist = await UserRepository.isPhoneNumberExist(userData.Phone_Number);
+                if (phoneExist) {
+                    throw new Error('Số điện thoại đã được sử dụng bởi tài khoản khác');
+                }
+            }
+
+            // Validate giới tính (nếu có)
+            if (userData.Sex && !['Male', 'Female', 'Other'].includes(userData.Sex)) {
+                throw new Error('Giới tính không hợp lệ. Phải là Male, Female hoặc Other');
+            }
+
+            // Validate Role (nếu có)
+            if (userData.Role && !['Admin', 'Staff', 'Customer', 'Manager'].includes(userData.Role)) {
+                throw new Error('Vai trò không hợp lệ. Phải là Admin, Staff, Customer hoặc Manager');
+            }
+
+            // Kiểm tra nếu email đã tồn tại
+            const existingUser = await User.findOne({ where: { Email: userData.Email } });
+            if (existingUser) {
+                throw new Error('Email đã được sử dụng');
+            }
+
+            // Kiểm tra nếu có Cinema_ID được cung cấp, xác nhận rạp phim tồn tại
+            if (userData.Cinema_ID) {
+                const { Cinema } = require('../models');
+                const cinema = await Cinema.findByPk(userData.Cinema_ID);
+                if (!cinema) {
+                    throw new Error('Không tìm thấy rạp phim');
+                }
+            }
+
+            // Validate ngày sinh (nếu có)
+            if (userData.Date_Of_Birth) {
+                const birthDate = new Date(userData.Date_Of_Birth);
+                if (isNaN(birthDate.getTime())) {
+                    throw new Error('Định dạng ngày sinh không hợp lệ');
+                }
+
+                // Kiểm tra tuổi hợp lệ (ít nhất 16 tuổi)
+                const currentDate = new Date();
+                const minBirthDate = new Date();
+                minBirthDate.setFullYear(currentDate.getFullYear() - 16);
+
+                if (birthDate > currentDate) {
+                    throw new Error('Ngày sinh không thể là ngày trong tương lai');
+                }
+
+                if (birthDate > minBirthDate) {
+                    throw new Error('Người dùng phải ít nhất 16 tuổi');
+                }
+            }
+
+            // Thay vì tạo mật khẩu ngẫu nhiên, chúng ta sẽ tạo một chuỗi hash làm giữ chỗ
+            // cho mật khẩu tạm thời để người dùng có thể đặt lại sau
+            const tempPasswordHash = await bcrypt.hash(uuidv4(), 10);
+
+            // Tạo dữ liệu người dùng mới với các trường cơ bản (không bao gồm ngày tháng)
+            const newUserData = {
+                Full_Name: userData.Full_Name,
+                Email: userData.Email,
+                Password: tempPasswordHash, // Mật khẩu tạm thời mà người dùng không biết
+                Role: userData.Role || 'Staff', // Mặc định là Staff nếu không chỉ định
+                Department: userData.Department,
+                Account_Status: 'Inactive', // Trạng thái chờ người dùng thiết lập mật khẩu
+                Cinema_ID: userData.Cinema_ID || null // Cho phép null
+            };
+
+            // Xử lý các trường tùy chọn
+            if (userData.Phone_Number) {
+                newUserData.Phone_Number = userData.Phone_Number;
+            }
+
+            if (userData.Sex) {
+                newUserData.Sex = userData.Sex;
+            }
+
+            if (userData.Address) {
+                newUserData.Address = userData.Address;
+            }
+
+            // Tạo người dùng mới
+            const newUser = await User.create(newUserData);
+            logger.info(`Đã tạo người dùng mới với ID: ${newUser.User_ID}`);
+
+            // Sau khi tạo thành công, cập nhật các trường ngày tháng riêng biệt 
+            // để tránh lỗi chuyển đổi ngày tháng
+            if (userData.Date_Of_Birth) {
+                try {
+                    await User.update(
+                        { Date_Of_Birth: null }, // Đặt về null trước
+                        { where: { User_ID: newUser.User_ID } }
+                    );
+
+                    // Cập nhật bằng SQL thuần nếu cần
+                    const pool = await require('../config/database').getConnection();
+                    const request = pool.request();
+                    request.input('userId', require('mssql').Int, newUser.User_ID);
+                    request.input('dateOfBirth', require('mssql').Date, new Date(userData.Date_Of_Birth));
+                    await request.query(`
+                        UPDATE ksf00691_team03.Users 
+                        SET Date_Of_Birth = @dateOfBirth 
+                        WHERE User_ID = @userId
+                    `);
+                    logger.info(`Đã cập nhật Date_Of_Birth thành công cho user ID: ${newUser.User_ID}`);
+                } catch (e) {
+                    logger.warn(`Lỗi khi cập nhật Date_Of_Birth: ${e.message}`);
+                }
+            }
+
+            // Cập nhật Hire_Date
+            try {
+                await User.update(
+                    { Hire_Date: null }, // Đặt về null trước
+                    { where: { User_ID: newUser.User_ID } }
+                );
+
+                // Cập nhật bằng SQL thuần
+                const hireDate = userData.Hire_Date ? new Date(userData.Hire_Date) : new Date();
+                const pool = await require('../config/database').getConnection();
+                const request = pool.request();
+                request.input('userId', require('mssql').Int, newUser.User_ID);
+                request.input('hireDate', require('mssql').Date, hireDate);
+                await request.query(`
+                    UPDATE ksf00691_team03.Users 
+                    SET Hire_Date = @hireDate 
+                    WHERE User_ID = @userId
+                `);
+                logger.info(`Đã cập nhật Hire_Date thành công cho user ID: ${newUser.User_ID}`);
+            } catch (e) {
+                logger.warn(`Lỗi khi cập nhật Hire_Date: ${e.message}`);
+            }
+
+            // Tạo token đặt mật khẩu
+            const token = crypto.randomBytes(32).toString('hex');
+            const tokenCacheKey = `password_setup_token_${token}`;
+            // Thời gian hết hạn dài hơn so với reset token thông thường (7 ngày)
+            const tokenExpirySeconds = 7 * 24 * 60 * 60; // 7 ngày
+
+            // Lưu token vào cache
+            cache.set(tokenCacheKey, { userId: newUser.User_ID, email: newUser.Email }, tokenExpirySeconds);
+            logger.info(`Password setup token generated for new user ${newUser.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
+
+            // Tạo URL để thiết lập mật khẩu
+            const apiBaseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+            const setupUrl = `${apiBaseUrl}/api/auth/reset-password-form?token=${token}&newUser=true`;
+
+            // Gửi email cho người dùng mới
+            try {
+                await EmailVerificationService.emailServiceInstance.sendNewUserPasswordSetupEmailAsync(
+                    newUser.Email,
+                    newUser.Full_Name,
+                    setupUrl,
+                    newUser.Role
+                );
+                logger.info(`Password setup email sent to new user ${newUser.Email}`);
+            } catch (emailError) {
+                logger.error(`Failed to send password setup email: ${emailError.message}`, emailError);
+                // Không throw error ở đây để vẫn trả về thông tin người dùng đã tạo
+            }
+
+            // Trả về thông tin người dùng đã tạo
+            return {
+                user: {
+                    User_ID: newUser.User_ID,
+                    Full_Name: newUser.Full_Name,
+                    Email: newUser.Email,
+                    Role: newUser.Role,
+                    Department: newUser.Department,
+                    Cinema_ID: newUser.Cinema_ID
+                },
+                message: `Đã tạo tài khoản ${newUser.Role} cho ${newUser.Full_Name}. Email đặt mật khẩu đã được gửi đến ${newUser.Email}.`
+            };
+        } catch (error) {
+            logger.error('Error in registerUserByAdmin:', error);
+            throw error;
+        }
+    },
+
+    /**
+     * Đăng ký người dùng bởi Staff/Manager
+     * @param {Object} userData - Thông tin người dùng cần đăng ký
+     * @param {number} staffId - ID của Staff thực hiện đăng ký
+     * @returns {Promise<Object>} - Thông tin người dùng đã đăng ký
+     */
+    async registerUserByStaff(userData, staffId) {
+        try {
+            logger.info('registerUserByStaff called with userData:', userData);
+
+            // Xác thực Staff/Manager
+            const staff = await User.findByPk(staffId);
+            if (!staff || !['Staff', 'Manager'].includes(staff.Role)) {
+                throw new Error('Không có quyền thực hiện chức năng này');
+            }
+
+            // Validate các trường bắt buộc
+            if (!userData.Full_Name || !userData.Email) {
+                throw new Error('Họ tên và Email là bắt buộc');
+            }
+
+            // Validate email
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(userData.Email)) {
+                throw new Error('Email không hợp lệ');
+            }
+
+            // Validate số điện thoại (nếu có)
+            if (userData.Phone_Number) {
+                const phoneRegex = /^(0\d{9}|84\d{9})$/;
+                if (!phoneRegex.test(userData.Phone_Number)) {
+                    throw new Error('Số điện thoại không hợp lệ. Phải có 10 số và bắt đầu bằng 0 hoặc 84');
+                }
+
+                // Kiểm tra số điện thoại đã tồn tại trong database hay chưa
+                const phoneUser = await User.findOne({
+                    where: { Phone_Number: userData.Phone_Number }
+                });
+                if (phoneUser) {
+                    throw new Error('Số điện thoại đã được sử dụng bởi tài khoản khác');
+                }
+            }
+
+            // Validate giới tính (nếu có)
+            if (userData.Sex && !['Male', 'Female', 'Other'].includes(userData.Sex)) {
+                throw new Error('Giới tính không hợp lệ. Phải là Male, Female hoặc Other');
+            }
+
+            // Kiểm tra nếu email đã tồn tại
+            const existingUser = await User.findOne({ where: { Email: userData.Email } });
+            if (existingUser) {
+                throw new Error('Email đã được sử dụng');
+            }
+
+            // Validate ngày sinh (nếu có)
+            if (userData.Date_Of_Birth) {
+                const birthDate = new Date(userData.Date_Of_Birth);
+                if (isNaN(birthDate.getTime())) {
+                    throw new Error('Định dạng ngày sinh không hợp lệ');
+                }
+
+                // Kiểm tra tuổi hợp lệ (ít nhất 16 tuổi)
+                const currentDate = new Date();
+                const minBirthDate = new Date();
+                minBirthDate.setFullYear(currentDate.getFullYear() - 16);
+
+                if (birthDate > currentDate) {
+                    throw new Error('Ngày sinh không thể là ngày trong tương lai');
+                }
+
+                if (birthDate > minBirthDate) {
+                    throw new Error('Người dùng phải ít nhất 16 tuổi');
+                }
+            }
+
+            // Staff chỉ có thể đăng ký khách hàng
+            userData.Role = 'Customer';
+
+            // Thay vì tạo mật khẩu ngẫu nhiên, tạo một chuỗi hash làm giữ chỗ
+            // cho mật khẩu tạm thời để người dùng có thể đặt lại sau
+            const tempPasswordHash = await bcrypt.hash(uuidv4(), 10);
+
+            // Tạo dữ liệu người dùng mới
+            const newUserData = {
+                Full_Name: userData.Full_Name,
+                Email: userData.Email,
+                Password: tempPasswordHash,
+                Role: userData.Role,
+                Account_Status: 'Active'  // Staff tạo customer với trạng thái Active luôn
+            };
+
+            // Xử lý các trường tùy chọn
+            if (userData.Phone_Number) {
+                newUserData.Phone_Number = userData.Phone_Number;
+            }
+
+            if (userData.Sex) {
+                newUserData.Sex = userData.Sex;
+            }
+
+            if (userData.Address) {
+                newUserData.Address = userData.Address;
+            }
+
+            // Tạo người dùng mới
+            const newUser = await User.create(newUserData);
+            logger.info(`Đã tạo người dùng mới với ID: ${newUser.User_ID}`);
+
+            // Sau khi tạo thành công, cập nhật các trường ngày tháng riêng biệt 
+            // để tránh lỗi chuyển đổi ngày tháng
+            if (userData.Date_Of_Birth) {
+                try {
+                    await User.update(
+                        { Date_Of_Birth: null }, // Đặt về null trước
+                        { where: { User_ID: newUser.User_ID } }
+                    );
+
+                    // Cập nhật bằng SQL thuần nếu cần
+                    const pool = await require('../config/database').getConnection();
+                    const request = pool.request();
+                    request.input('userId', require('mssql').Int, newUser.User_ID);
+                    request.input('dateOfBirth', require('mssql').Date, new Date(userData.Date_Of_Birth));
+                    await request.query(`
+                        UPDATE ksf00691_team03.Users 
+                        SET Date_Of_Birth = @dateOfBirth 
+                        WHERE User_ID = @userId
+                    `);
+                    logger.info(`Đã cập nhật Date_Of_Birth thành công cho user ID: ${newUser.User_ID}`);
+                } catch (e) {
+                    logger.warn(`Lỗi khi cập nhật Date_Of_Birth: ${e.message}`);
+                }
+            }
+
+            // Tạo token đặt mật khẩu
+            const token = crypto.randomBytes(32).toString('hex');
+            const tokenCacheKey = `password_setup_token_${token}`;
+            // Thời gian hết hạn dài hơn so với reset token thông thường (7 ngày)
+            const tokenExpirySeconds = 7 * 24 * 60 * 60; // 7 ngày
+
+            // Lưu token vào cache
+            cache.set(tokenCacheKey, { userId: newUser.User_ID, email: newUser.Email }, tokenExpirySeconds);
+            logger.info(`Password setup token generated for new user ${newUser.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
+
+            // Tạo URL để thiết lập mật khẩu
+            const apiBaseUrl = process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+            const setupUrl = `${apiBaseUrl}/api/auth/reset-password-form?token=${token}&newUser=true`;
+
+            // Gửi email cho người dùng mới
+            try {
+                await EmailVerificationService.emailServiceInstance.sendNewUserPasswordSetupEmailAsync(
+                    newUser.Email,
+                    newUser.Full_Name,
+                    setupUrl,
+                    newUser.Role
+                );
+                logger.info(`Password setup email sent to new user ${newUser.Email}`);
+            } catch (emailError) {
+                logger.error(`Failed to send password setup email: ${emailError.message}`, emailError);
+                // Không throw error ở đây để vẫn trả về thông tin người dùng đã tạo
+            }
+
+            // Trả về thông tin người dùng đã tạo
+            return {
+                user: {
+                    User_ID: newUser.User_ID,
+                    Full_Name: newUser.Full_Name,
+                    Email: newUser.Email,
+                    Role: newUser.Role
+                },
+                message: `Đã tạo tài khoản khách hàng cho ${newUser.Full_Name} với trạng thái Active. Email đặt mật khẩu đã được gửi đến ${newUser.Email}.`
+            };
+        } catch (error) {
+            logger.error('Error in registerUserByStaff:', error);
+            throw error;
+        }
     }
 };
 
