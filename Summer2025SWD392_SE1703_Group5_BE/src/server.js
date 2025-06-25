@@ -20,6 +20,9 @@ const showtimeRoutes = require('./routes/showtimeRoutes');
 const cinemaRoomRoutes = require('./routes/cinemaRoomRoutes');
 const cinemaRoutes = require('./routes/cinemaRoutes');
 const seatLayoutRoutes = require('./routes/seatLayoutRoutes');
+const ticketRoutes = require('./routes/ticketRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
+
 // Import database connection
 const { getConnection, testConnection } = require('./config/database');
 
@@ -267,6 +270,8 @@ app.use('/api/showtimes', showtimeRoutes);
 app.use('/api/cinema-rooms', cinemaRoomRoutes);
 app.use('/api/cinemas', cinemaRoutes);
 app.use('/api/seat-layouts', seatLayoutRoutes);
+app.use('/api/tickets', ticketRoutes);
+app.use('/api/bookings', bookingRoutes);
 // Route cơ bản để kiểm tra server
 // app.get('/', (req, res) => {
 //     res.status(200).json({
