@@ -6,14 +6,11 @@ const { authMiddleware, authorizeRoles } = require('../middlewares/authMiddlewar
 const upload = require('../middlewares/upload');
 const { movieValidation } = require('../middlewares/validation');
 
-
 // Thêm middleware xử lý validation errors
 const { validationResult } = require('express-validator');
 
-
 const handleValidationErrors = (req, res, next) => {
     const errors = validationResult(req);
-
 
     if (!errors.isEmpty()) {
         // Xóa file upload nếu có lỗi validation
@@ -23,7 +20,6 @@ const handleValidationErrors = (req, res, next) => {
                 fs.unlinkSync(req.file.path);
             }
         }
-
 
         return res.status(400).json({
             message: 'Dữ liệu không hợp lệ',
@@ -35,10 +31,8 @@ const handleValidationErrors = (req, res, next) => {
         });
     }
 
-
     next();
 };
-
 
 /**
  * @swagger
@@ -64,6 +58,10 @@ const handleValidationErrors = (req, res, next) => {
  *           type: string
  *           format: date
  *           description: Ngày phát hành
+ *         Premiere_Date:
+ *           type: string
+ *           format: date
+ *           description: Ngày công chiếu
  *         End_Date:
  *           type: string
  *           format: date
@@ -73,14 +71,14 @@ const handleValidationErrors = (req, res, next) => {
  *           description: Công ty sản xuất
  *         Director:
  *           type: string
- *           description: Đạo diễn
+ *           description: Ğạo diễn
  *         Cast:
  *           type: string
  *           description: Diễn viên
  *         Duration:
  *           type: integer
  *           minimum: 60
- *           description: Thời lượng phim (phút)
+ *           description: ThỞi lượng phim (phút)
  *         Genre:
  *           type: string
  *           description: Thể loại
@@ -110,12 +108,12 @@ const handleValidationErrors = (req, res, next) => {
  *         Created_At:
  *           type: string
  *           format: date-time
- *           description: Thời gian tạo
+ *           description: ThỞi gian tạo
  *         Updated_At:
  *           type: string
  *           format: date-time
- *           description: Thời gian cập nhật
- *
+ *           description: ThỞi gian cập nhật
+ * 
  *     MovieRating:
  *       type: object
  *       required:
@@ -125,11 +123,11 @@ const handleValidationErrors = (req, res, next) => {
  *           type: integer
  *           minimum: 1
  *           maximum: 5
- *           description: Điểm đánh giá (1-5 sao)
+ *           description: Ğiểm đánh giá (1-5 sao)
  *         Comment:
  *           type: string
  *           description: Bình luận
- *
+ * 
  *     ApiResponse:
  *       type: object
  *       properties:
@@ -141,7 +139,7 @@ const handleValidationErrors = (req, res, next) => {
  *           type: array
  *           items:
  *             type: object
- *
+ * 
  *   securitySchemes:
  *     bearerAuth:
  *       type: http
@@ -149,12 +147,15 @@ const handleValidationErrors = (req, res, next) => {
  *       bearerFormat: JWT
  */
 
-
 /**
  * @swagger
  * /api/movies:
  *   get:
- *     summary: Lấy danh sách tất cả phim
+ *     summary: Lấy danh sách tất cả phim (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng (kể cả chưa đăng nhập) xem danh sách phim đang có trong hệ thống.
+ *       Có thể lỞc theo trạng thái phim (đang chiếu, sắp chiếu, v.v.) và tìm kiếm theo tên phim, đạo diễn, thể loại hoặc diễn viên.
+ *       Kết quả được phân trang để tối ưu hiệu suất.
  *     tags: [Movies]
  *     parameters:
  *       - in: query
@@ -162,7 +163,7 @@ const handleValidationErrors = (req, res, next) => {
  *         schema:
  *           type: string
  *           enum: [Coming Soon, Now Showing, Ended, Cancelled, Inactive]
- *         description: Lọc theo trạng thái phim
+ *         description: LỞc theo trạng thái phim
  *       - in: query
  *         name: filter
  *         schema:
@@ -185,50 +186,24 @@ const handleValidationErrors = (req, res, next) => {
  *         description: Số lượng phim mỗi trang
  *     responses:
  *       200:
- *         description: Danh sách phim
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Movie'
- *                 pagination:
- *                   type: object
- *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
- *                     totalPages:
- *                       type: integer
- *       404:
- *         description: Không tìm thấy phim nào
+ *         description: Trả vỞ danh sách phim theo các tiêu chí lỞc
  *       500:
  *         description: Lỗi server
  */
 router.get('/', movieController.getAllMovies);
 
-
 /**
  * @swagger
  * /api/movies/coming-soon:
  *   get:
- *     summary: Lấy danh sách phim sắp chiếu
+ *     summary: Lấy danh sách phim sắp chiếu (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng (kể cả chưa đăng nhập) xem danh sách các phim sắp chiếu.
+ *       Kết quả bao gồm thông tin chi tiết vỞ các phim có trạng thái "Coming Soon".
  *     tags: [Movies]
  *     responses:
  *       200:
  *         description: Danh sách phim sắp chiếu
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Movie'
  *       404:
  *         description: Không có phim sắp chiếu
  *       500:
@@ -236,22 +211,18 @@ router.get('/', movieController.getAllMovies);
  */
 router.get('/coming-soon', movieController.getComingSoonMovies);
 
-
 /**
  * @swagger
  * /api/movies/now-showing:
  *   get:
- *     summary: Lấy danh sách phim đang chiếu
+ *     summary: Lấy danh sách phim đang chiếu (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng (kể cả chưa đăng nhập) xem danh sách các phim đang chiếu.
+ *       Kết quả bao gồm thông tin chi tiết vỞ các phim có trạng thái "Now Showing".
  *     tags: [Movies]
  *     responses:
  *       200:
  *         description: Danh sách phim đang chiếu
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Movie'
  *       404:
  *         description: Không có phim đang chiếu
  *       500:
@@ -259,22 +230,18 @@ router.get('/coming-soon', movieController.getComingSoonMovies);
  */
 router.get('/now-showing', movieController.getNowShowingMovies);
 
-
 /**
  * @swagger
  * /api/movies/genres:
  *   get:
- *     summary: Lấy danh sách thể loại phim
+ *     summary: Lấy danh sách thể loại phim (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem danh sách các thể loại phim hiện có trong hệ thống.
+ *       Kết quả là một danh sách duy nhất các thể loại phim, hữu ích để hiển thị bộ lỞc hoặc menu thể loại.
  *     tags: [Movies]
  *     responses:
  *       200:
  *         description: Danh sách thể loại
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: string
  *       404:
  *         description: Không tìm thấy thể loại nào
  *       500:
@@ -282,12 +249,15 @@ router.get('/now-showing', movieController.getNowShowingMovies);
  */
 router.get('/genres', movieController.getMovieGenres);
 
-
 /**
  * @swagger
  * /api/movies/search:
  *   get:
- *     summary: Tìm kiếm phim nâng cao
+ *     summary: Tìm kiếm phim nâng cao (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng thực hiện tìm kiếm phim với nhiỞu tiêu chí lỞc khác nhau.
+ *       Có thể tìm kiếm theo từ khóa, thể loại, năm phát hành, xếp hạng độ tuổi và thỞi lượng.
+ *       Kết quả có thể được sắp xếp theo nhiỞu tiêu chí khác nhau.
  *     tags: [Movies]
  *     parameters:
  *       - in: query
@@ -299,28 +269,28 @@ router.get('/genres', movieController.getMovieGenres);
  *         name: genre
  *         schema:
  *           type: string
- *         description: Lọc theo thể loại
+ *         description: LỞc theo thể loại
  *       - in: query
  *         name: year
  *         schema:
  *           type: integer
- *         description: Lọc theo năm phát hành
+ *         description: LỞc theo năm phát hành
  *       - in: query
  *         name: rating
  *         schema:
  *           type: string
  *           enum: [G, PG, PG-13, R, NC-17]
- *         description: Lọc theo xếp hạng độ tuổi
+ *         description: LỞc theo xếp hạng độ tuổi
  *       - in: query
  *         name: duration_min
  *         schema:
  *           type: integer
- *         description: Thời lượng tối thiểu (phút)
+ *         description: ThỞi lượng tối thiểu (phút)
  *       - in: query
  *         name: duration_max
  *         schema:
  *           type: integer
- *         description: Thời lượng tối đa (phút)
+ *         description: ThỞi lượng tối đa (phút)
  *       - in: query
  *         name: sort
  *         schema:
@@ -331,19 +301,6 @@ router.get('/genres', movieController.getMovieGenres);
  *     responses:
  *       200:
  *         description: Kết quả tìm kiếm
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Movie'
- *                 total:
- *                   type: integer
- *                 query:
- *                   type: object
  *       404:
  *         description: Không tìm thấy kết quả nào
  *       500:
@@ -351,12 +308,14 @@ router.get('/genres', movieController.getMovieGenres);
  */
 router.get('/search', movieController.searchMovies);
 
-
 /**
  * @swagger
  * /api/movies/genre/{genre}:
  *   get:
- *     summary: Lấy phim theo thể loại
+ *     summary: Lấy phim theo thể loại (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem danh sách các phim thuộc một thể loại cụ thể.
+ *       Kết quả bao gồm tất cả thông tin chi tiết vỞ các phim phù hợp với thể loại được chỉ định.
  *     tags: [Movies]
  *     parameters:
  *       - in: path
@@ -368,12 +327,6 @@ router.get('/search', movieController.searchMovies);
  *     responses:
  *       200:
  *         description: Danh sách phim theo thể loại
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Movie'
  *       404:
  *         description: Không tìm thấy phim nào cho thể loại này
  *       500:
@@ -381,66 +334,42 @@ router.get('/search', movieController.searchMovies);
  */
 router.get('/genre/:genre', movieController.getMoviesByGenre);
 
-
 /**
  * @swagger
  * /api/movies/stats/overview:
  *   get:
- *     summary: Lấy thống kê tổng quan phim (Admin/Staff only)
+ *     summary: Lấy thống kê tổng quan phim (Chỉ Admin/Manager)
+ *     description: >
+ *       API này cho phép ngưỞi dùng có vai trò Admin, Manager xem thống kê tổng quan vỞ phim trong hệ thống.
+ *       Kết quả bao gồm tổng số phim, số lượng phim theo từng trạng thái, số lượng đánh giá, và phân bố thể loại phổ biến.
+ *       API này hữu ích cho việc theo dõi và báo cáo tình hình kinh doanh.
  *     tags: [Movies]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: Thống kê tổng quan
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 total_movies:
- *                   type: integer
- *                 coming_soon:
- *                   type: integer
- *                 now_showing:
- *                   type: integer
- *                 ended:
- *                   type: integer
- *                 cancelled:
- *                   type: integer
- *                 total_ratings:
- *                   type: integer
- *                 average_rating:
- *                   type: number
- *                   format: float
- *                 popular_genres:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       genre:
- *                         type: string
- *                       count:
- *                         type: integer
  *       401:
  *         description: Chưa đăng nhập
  *       403:
- *         description: Không có quyền truy cập
+ *         description: Không có quyỞn truy cập
  *       500:
  *         description: Lỗi server
  */
 router.get('/stats/overview',
     authMiddleware,
-    authorizeRoles('Admin', 'Staff'),
+    authorizeRoles('Admin', 'Manager'),
     movieController.getMovieStats
 );
-
 
 /**
  * @swagger
  * /api/movies/{id}:
  *   get:
- *     summary: Lấy thông tin chi tiết phim theo ID
+ *     summary: Lấy thông tin chi tiết phim theo ID (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem thông tin chi tiết của một phim cụ thể dựa trên ID.
+ *       Kết quả bao gồm đầy đủ thông tin vỞ phim, đánh giá từ ngưỞi xem, và thông tin vỞ các suất chiếu sắp tới.
  *     tags: [Movies]
  *     parameters:
  *       - in: path
@@ -452,55 +381,6 @@ router.get('/stats/overview',
  *     responses:
  *       200:
  *         description: Thông tin chi tiết phim
- *         content:
- *           application/json:
- *             schema:
- *               allOf:
- *                 - $ref: '#/components/schemas/Movie'
- *                 - type: object
- *                   properties:
- *                     Rating_Summary:
- *                       type: object
- *                       properties:
- *                         Average_Rating:
- *                           type: number
- *                           format: float
- *                         Rating_Count:
- *                           type: integer
- *                         Rating_Distribution:
- *                           type: array
- *                           items:
- *                             type: integer
- *                     Ratings:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           Rating_ID:
- *                             type: integer
- *                           Full_Name:
- *                             type: string
- *                           Rating:
- *                             type: integer
- *                           Comment:
- *                             type: string
- *                           Rating_Date:
- *                             type: string
- *                             format: date-time
- *                           Is_Verified:
- *                             type: boolean
- *                     Showtimes:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           Show_Date:
- *                             type: string
- *                             format: date
- *                           Showtimes:
- *                             type: array
- *                             items:
- *                               type: object
  *       404:
  *         description: Không tìm thấy phim
  *       500:
@@ -508,12 +388,15 @@ router.get('/stats/overview',
  */
 router.get('/:id', movieController.getMovieById);
 
-
 /**
  * @swagger
  * /api/movies/{id}/similar:
  *   get:
- *     summary: Lấy danh sách phim tương tự
+ *     summary: Lấy danh sách phim tương tự (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem danh sách các phim tương tự với một phim cụ thể dựa trên ID.
+ *       Hệ thống sẽ đỞ xuất các phim có thể loại, đạo diễn hoặc diễn viên tương tự với phim được chỉ định.
+ *       ThưỞng được sử dụng để hiển thị phần "Phim liên quan" hoặc "Có thể bạn cũng thích".
  *     tags: [Movies]
  *     parameters:
  *       - in: path
@@ -533,12 +416,6 @@ router.get('/:id', movieController.getMovieById);
  *     responses:
  *       200:
  *         description: Danh sách phim tương tự
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Movie'
  *       404:
  *         description: Không tìm thấy phim hoặc không có phim tương tự
  *       500:
@@ -546,12 +423,15 @@ router.get('/:id', movieController.getMovieById);
  */
 router.get('/:id/similar', movieController.getSimilarMovies);
 
-
 /**
  * @swagger
  * /api/movies/{id}/rate:
  *   post:
- *     summary: Đánh giá phim
+ *     summary: Ğánh giá phim (Yêu cầu đăng nhập)
+ *     description: >
+ *       API này cho phép ngưỞi dùng đã đăng nhập đánh giá và bình luận vỞ một phim cụ thể.
+ *       NgưỞi dùng có thể cho điểm từ 1-5 sao và thêm nhận xét vỞ phim.
+ *       Mỗi ngưỞi dùng chỉ có thể đánh giá một phim một lần, nhưng có thể cập nhật đánh giá của mình sau đó.
  *     tags: [Movies]
  *     security:
  *       - bearerAuth: []
@@ -570,29 +450,7 @@ router.get('/:id/similar', movieController.getSimilarMovies);
  *             $ref: '#/components/schemas/MovieRating'
  *     responses:
  *       200:
- *         description: Đánh giá thành công
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 rating_id:
- *                   type: integer
- *                 movie_id:
- *                   type: integer
- *                 user_id:
- *                   type: integer
- *                 rating:
- *                   type: integer
- *                 comment:
- *                   type: string
- *                 rating_date:
- *                   type: string
- *                   format: date-time
- *                 is_verified:
- *                   type: boolean
- *                 is_updated:
- *                   type: boolean
+ *         description: Ğánh giá thành công
  *       400:
  *         description: Dữ liệu không hợp lệ
  *       401:
@@ -604,12 +462,16 @@ router.get('/:id/similar', movieController.getSimilarMovies);
  */
 router.post('/:id/rate', authMiddleware, movieController.rateMovie);
 
-
 /**
  * @swagger
  * /api/movies:
  *   post:
- *     summary: Tạo phim mới (Admin/Staff only)
+ *     summary: Tạo phim mới (Chỉ Admin)
+ *     description: >
+ *       API này cho phép ngưỞi dùng có vai trò Admin tạo một phim mới trong hệ thống.
+ *       NgưỞi dùng cần cung cấp thông tin đầy đủ vỞ phim, bao gồm tên, ngày phát hành, đạo diễn, thể loại và các thông tin khác.
+ *       Có thể tải lên file ảnh poster hoặc cung cấp URL của poster có sẵn. API này thưỞng được sử dụng trong trang quản trị để 
+ *       thêm phim mới vào hệ thống.
  *     tags: [Movies]
  *     security:
  *       - bearerAuth: []
@@ -634,6 +496,10 @@ router.post('/:id/rate', authMiddleware, movieController.rateMovie);
  *                 type: string
  *                 format: date
  *                 description: Ngày phát hành (phải trong tương lai)
+ *               Premiere_Date:
+ *                 type: string
+ *                 format: date
+ *                 description: Ngày công chiếu 
  *               End_Date:
  *                 type: string
  *                 format: date
@@ -643,14 +509,14 @@ router.post('/:id/rate', authMiddleware, movieController.rateMovie);
  *                 description: Công ty sản xuất
  *               Director:
  *                 type: string
- *                 description: Đạo diễn
+ *                 description: Ğạo diễn
  *               Cast:
  *                 type: string
  *                 description: Diễn viên
  *               Duration:
  *                 type: integer
  *                 minimum: 60
- *                 description: Thời lượng phim (tối thiểu 60 phút)
+ *                 description: ThỞi lượng phim (tối thiểu 60 phút)
  *               Genre:
  *                 type: string
  *                 description: Thể loại
@@ -684,34 +550,34 @@ router.post('/:id/rate', authMiddleware, movieController.rateMovie);
  *     responses:
  *       201:
  *         description: Tạo phim thành công
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Movie'
  *       400:
  *         description: Dữ liệu không hợp lệ hoặc phim đã tồn tại
  *       401:
  *         description: Chưa đăng nhập
  *       403:
- *         description: Không có quyền truy cập
+ *         description: Không có quyỞn truy cập
  *       500:
  *         description: Lỗi server
  */
 router.post('/',
     authMiddleware,
-    authorizeRoles('Admin', 'Staff'),
+    authorizeRoles('Admin'),
     upload.single('posterFile'),
     movieValidation.create,
     handleValidationErrors,
     movieController.createMovie
 );
 
-
 /**
  * @swagger
  * /api/movies/{id}:
  *   put:
- *     summary: Cập nhật thông tin phim (Admin/Staff only)
+ *     summary: Cập nhật thông tin phim (Chỉ Admin)
+ *     description: >
+ *       API này cho phép ngưỞi dùng có vai trò Admin cập nhật thông tin của một phim cụ thể.
+ *       Có thể thay đổi bất kỳ thông tin nào của phim như tên, ngày chiếu, đạo diễn, thể loại và các thông tin khác.
+ *       Cũng có thể cập nhật poster bằng cách tải lên file mới hoặc cung cấp URL mới. API này thưỞng được sử dụng 
+ *       trong trang quản trị để cập nhật thông tin phim khi có thay đổi.
  *     tags: [Movies]
  *     security:
  *       - bearerAuth: []
@@ -736,6 +602,10 @@ router.post('/',
  *                 type: string
  *                 format: date
  *                 description: Ngày phát hành
+ *               Premiere_Date:
+ *                 type: string
+ *                 format: date
+ *                 description: Ngày công chiếu 
  *               End_Date:
  *                 type: string
  *                 format: date
@@ -745,14 +615,14 @@ router.post('/',
  *                 description: Công ty sản xuất
  *               Director:
  *                 type: string
- *                 description: Đạo diễn
+ *                 description: Ğạo diễn
  *               Cast:
  *                 type: string
  *                 description: Diễn viên
  *               Duration:
  *                 type: integer
  *                 minimum: 60
- *                 description: Thời lượng phim (tối thiểu 60 phút)
+ *                 description: ThỞi lượng phim (tối thiểu 60 phút)
  *               Genre:
  *                 type: string
  *                 description: Thể loại
@@ -786,16 +656,12 @@ router.post('/',
  *     responses:
  *       200:
  *         description: Cập nhật phim thành công
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Movie'
  *       400:
  *         description: Dữ liệu không hợp lệ
  *       401:
  *         description: Chưa đăng nhập
  *       403:
- *         description: Không có quyền truy cập
+ *         description: Không có quyỞn truy cập
  *       404:
  *         description: Không tìm thấy phim
  *       500:
@@ -803,19 +669,22 @@ router.post('/',
  */
 router.put('/:id',
     authMiddleware,
-    authorizeRoles('Admin', 'Staff'),
+    authorizeRoles('Admin'),
     upload.single('posterFile'),
     movieValidation.update,
     handleValidationErrors,
     movieController.updateMovie
 );
 
-
 /**
  * @swagger
  * /api/movies/{id}:
  *   delete:
- *     summary: Xóa phim (Admin/Staff only)
+ *     summary: Xóa phim (Chỉ Admin)
+ *     description: >
+ *       API này cho phép ngưỞi dùng có vai trò Admin xóa một phim khỞi hệ thống.
+ *       Nếu phim đã có suất chiếu hoặc đánh giá, hệ thống sẽ không cho phép xóa hoàn toàn mà chỉ vô hiệu hóa phim.
+ *       Phim bị vô hiệu hóa sẽ không hiển thị cho ngưỞi dùng thông thưỞng nhưng vẫn tồn tại trong cơ sở dữ liệu.
  *     tags: [Movies]
  *     security:
  *       - bearerAuth: []
@@ -829,22 +698,12 @@ router.put('/:id',
  *     responses:
  *       200:
  *         description: Xóa phim thành công
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   enum: [deleted, deactivated]
- *                 message:
- *                   type: string
  *       400:
  *         description: Không thể xóa phim (có suất chiếu hoặc đánh giá)
  *       401:
  *         description: Chưa đăng nhập
  *       403:
- *         description: Không có quyền truy cập
+ *         description: Không có quyỞn truy cập
  *       404:
  *         description: Không tìm thấy phim
  *       500:
@@ -856,8 +715,97 @@ router.delete('/:id',
     movieController.deleteMovie
 );
 
+/**
+ * @swagger
+ * /api/movies/{movieId}/cinemas/{cinemaId}/showtimes:
+ *   get:
+ *     summary: Lấy danh sách suất chiếu cho một phim tại rạp phim cụ thể (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem danh sách suất chiếu của một phim cụ thể tại một rạp phim cụ thể.
+ *       Kết quả được nhóm theo ngày và bao gồm thông tin vỞ thỞi gian bắt đầu, kết thúc, phòng chiếu và số ghế còn trống.
+ *       API này thưỞng được sử dụng trong quá trình đặt vé để ngưỞi dùng lựa chỞn suất chiếu phù hợp.
+ *     tags: [Movies]
+ *     parameters:
+ *       - in: path
+ *         name: movieId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của phim
+ *       - in: path
+ *         name: cinemaId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của rạp phim
+ *     responses:
+ *       200:
+ *         description: Danh sách suất chiếu phim tại rạp phim
+ *       400:
+ *         description: ID phim hoặc ID rạp phim không hợp lệ
+ *       404:
+ *         description: Không tìm thấy phim hoặc rạp phim
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.get('/:movieId/cinemas/:cinemaId/showtimes', movieController.getShowtimesByMovieAndCinema);
+
+/**
+ * @swagger
+ * /api/movies/{movieId}/cinemas:
+ *   get:
+ *     summary: Lấy danh sách rạp phim đang chiếu một phim cụ thể (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem danh sách các rạp phim đang chiếu một phim cụ thể.
+ *       Kết quả bao gồm thông tin vỞ rạp phim và các suất chiếu được nhóm theo ngày.
+ *       API này thưỞng được sử dụng trong quá trình đặt vé để ngưỞi dùng lựa chỞn rạp phim phù hợp.
+ *     tags: [Movies]
+ *     parameters:
+ *       - in: path
+ *         name: movieId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của phim
+ *     responses:
+ *       200:
+ *         description: Danh sách rạp phim đang chiếu phim
+ *       400:
+ *         description: ID phim không hợp lệ
+ *       404:
+ *         description: Không tìm thấy phim
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.get('/:movieId/cinemas', movieController.getCinemasShowingMovie);
+
+/**
+ * @swagger
+ * /api/movies/{movieId}/showtimes:
+ *   get:
+ *     summary: Lấy tất cả suất chiếu của một phim trên tất cả các rạp (Public)
+ *     description: >
+ *       API này cho phép tất cả ngưỞi dùng xem tất cả suất chiếu của một phim cụ thể trên tất cả các rạp.
+ *       Kết quả được nhóm theo ngày và bao gồm thông tin vỞ rạp phim, phòng chiếu, thỞi gian bắt đầu, kết thúc và số ghế còn trống.
+ *       API này hữu ích cho việc hiển thị lịch chiếu tổng thể của một phim.
+ *     tags: [Movies]
+ *     parameters:
+ *       - in: path
+ *         name: movieId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của phim
+ *     responses:
+ *       200:
+ *         description: Danh sách tất cả suất chiếu của phim
+ *       400:
+ *         description: ID phim không hợp lệ
+ *       404:
+ *         description: Không tìm thấy phim
+ *       500:
+ *         description: Lỗi hệ thống
+ */
+router.get('/:movieId/showtimes', movieController.getAllShowtimesForMovie);
 
 module.exports = router;
-
-
-
