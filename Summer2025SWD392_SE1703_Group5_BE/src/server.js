@@ -22,6 +22,8 @@ const cinemaRoutes = require('./routes/cinemaRoutes');
 const seatLayoutRoutes = require('./routes/seatLayoutRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
+const memberRoutes = require('./routes/memberRoutes');
+const bookingExpirationRoutes = require('./routes/bookingExpirationRoutes');
 
 // Import database connection
 const { getConnection, testConnection } = require('./config/database');
@@ -272,6 +274,8 @@ app.use('/api/cinemas', cinemaRoutes);
 app.use('/api/seat-layouts', seatLayoutRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/members', memberRoutes);
+app.use('/api/booking-expiration', bookingExpirationRoutes);
 // Route cơ bản để kiểm tra server
 // app.get('/', (req, res) => {
 //     res.status(200).json({
