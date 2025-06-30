@@ -1,320 +1,985 @@
-// File: src/routes/authRoutes.js
+'use strict';
 
-const express = require('express');
-const router = express.Router();
-const authController = require('../controllers/authController');
-const { authMiddleware, authorizeRoles } = require('../middlewares/authMiddleware');
-const { authValidation, memberValidation } = require('../middlewares/validation');
+const AuthService = require('../services/authService');
+const EmailService = require('../services/emailService');
+const AccountLockingService = require('../services/accountLockingService');
+const EmailVerificationService = require('../services/emailVerificationService');
+const UserRepository = require('../repositories/userRepository');
+const logger = require('../utils/logger');
+const bcrypt = require('bcrypt');
+const cache = require('../config/cache').get();
+const jwt = require('jsonwebtoken');
+const { checkPasswordStrength, createDetailedValidationResponse } = require('../middlewares/validation');
 
-/**
- * @swagger
- * tags:
- *   name: Auth
- *   description: Các API xác thực và quản lý tài khoản người dùng
- */
+class AuthController {
+    async login(req, res) {
+        try {
+            const { Email, Password } = req.body;
+            if (!Email || !Password) {
+                return res.status(400).json({ message: 'Email và mật khẩu là bắt buộc.' });
+            }
+            const result = await AuthService.login(Email, Password);
+            return res.status(200).json(result);
+        } catch (err) {
+            logger.error(`[authController.login] Error: ${err.message}`);
+            return res.status(400).json({ message: err.message });
+        }
+    }
 
-/**
- * @swagger
- * /api/auth/register:
- *   post:
- *     summary: Đăng ký tài khoản người dùng mới (Public)
- *     description: >
- *       API này cho phép bất kỳ ai truy cập trang web đều có thể đăng ký một tài khoản người dùng mới.
- *       Sau khi đăng ký, người dùng sẽ nhận được email xác thực để kích hoạt tài khoản.
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - FullName
- *               - Email
- *               - Password
- *               - ConfirmPassword
- *               - PhoneNumber
- *               - DateOfBirth
- *               - Sex
- *             properties:
- *               FullName:
- *                 type: string
- *                 example: Nguyễn Văn A
- *               Email:
- *                 type: string
- *                 format: email
- *                 example: nguyenvana@example.com
- *               Password:
- *                 type: string
- *                 example: P@sswOrd123!
- *               ConfirmPassword:
- *                 type: string
- *                 example: P@sswOrd123!
- *               PhoneNumber:
- *                 type: string
- *                 example: "0901234567"
- *               DateOfBirth:
- *                 type: string
- *                 format: date
- *                 example: 1990-01-01
- *               Sex:
- *                 type: string
- *                 example: Male
- *               Address:
- *                 type: string
- *                 example: 123 Đường ABC, Quận XYZ, TP.HCM
- *     responses:
- *       201:
- *         description: Đăng ký thành công.
- *       400:
- *         description: Dữ liệu không hợp lệ.
- */
-router.post('/register', authValidation.register, authController.register);
+    async logout(req, res) {
+        return res.json({ message: 'Đăng xuất thành công' });
+    }
 
-/**
- * @swagger
- * /api/auth/login:
- *   post:
- *     summary: Đăng nhập hệ thống (Public)
- *     description: >
- *       API này cho phép người dùng đăng nhập vào hệ thống bằng email và mật khẩu.
- *       Có thể sử dụng cho mọi loại tài khoản (Khách hàng, Nhân viên, Quản trị viên).
- *       Trả về token JWT để xác thực các yêu cầu tiếp theo.
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - Email
- *               - Password
- *             properties:
- *               Email:
- *                 type: string
- *                 format: email
- *                 example: nguyenvana@example.com
- *               Password:
- *                 type: string
- *                 example: P@sswOrd123!
- *     responses:
- *       200:
- *         description: Đăng nhập thành công.
- *       400:
- *         description: Email hoặc mật khẩu không đúng.
- *       401:
- *         description: Tài khoản bị khóa hoặc chưa xác thực.
- *       429:
- *         description: Quá nhiều lần đăng nhập thất bại, tài khoản đã bị tạm khóa.
- */
-router.post('/login', authValidation.login, authController.login);
+    async register(req, res) {
+        try {
+            logger.info('=== REGISTER CONTROLLER DEBUG ===');
+            logger.info(`Raw request body: ${JSON.stringify(req.body)}`);
+            logger.info(`Content-Type: ${req.headers['content-type']}`);
 
-/**
- * @swagger
- * /api/auth/verify-email:
- *   get:
- *     summary: Xác thực địa chỉ email sau khi đăng ký (Public)
- *     description: >
- *       API này được sử dụng để xác thực địa chỉ email của người dùng sau khi đăng ký.
- *       Người dùng sẽ nhận được email chứa liên kết với token xác thực và sẽ truy cập API này thông qua liên kết đó.
- *     tags: [Auth]
- *     parameters:
- *       - in: query
- *         name: token
- *         required: true
- *         schema:
- *           type: string
- *         description: Token xác thực được gửi qua email.
- *     responses:
- *       200:
- *         description: Xác thực email thành công.
- *       400:
- *         description: Token không hợp lệ hoặc đã hết hạn.
- */
-router.get('/verify-email', authController.verifyEmail);
+            const {
+                FullName,
+                Email,
+                Password,
+                ConfirmPassword,
+                PhoneNumber,
+                DateOfBirth,
+                Sex,
+                Address,
+            } = req.body;
 
-/**
- * @swagger
- * /api/auth/reset-password:
- *   post:
- *     summary: Yêu cầu reset mật khẩu (Public)
- *     description: >
- *       API này cho phép người dùng yêu cầu đặt lại mật khẩu khi quên mật khẩu.
- *       Hệ thống sẽ gửi email chứa liên kết đặt lại mật khẩu đến địa chỉ email được cung cấp.
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - Email
- *             properties:
- *               Email:
- *                 type: string
- *                 format: email
- *                 example: nguyenvana@example.com
- *     responses:
- *       200:
- *         description: Yêu cầu reset mật khẩu đã được gửi.
- *       400:
- *         description: Email không tồn tại hoặc lỗi khác.
- */
-router.post('/reset-password', authController.resetPassword);
+            if (Password !== ConfirmPassword) {
+                logger.warn('[authController.register] Password and ConfirmPassword do not match');
+                return res.status(400).json({ message: 'Mật khẩu và xác nhận mật khẩu không khớp' });
+            }
 
-/**
- * @swagger
- * /api/auth/resend-verification-email:
- *   post:
- *     summary: Gửi lại email xác thực tài khoản (Public)
- *     description: >
- *       API này cho phép người dùng yêu cầu gửi lại email xác thực khi chưa nhận được email xác thực ban đầu
- *       hoặc email xác thực đã hết hạn.
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - email
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
- *     responses:
- *       200:
- *         description: Email xác thực đã được gửi lại.
- *       400:
- *         description: Email không tồn tại, tài khoản đã xác thực hoặc lỗi khác.
- */
-router.post('/resend-verification-email', authController.resendVerificationEmail);
+            // Trước khi gọi service, chuyển đổi tên trường từ camelCase thành snake_case
+            // để phù hợp với validation middleware
+            req.body.Full_Name = FullName;
+            req.body.Phone_Number = PhoneNumber;
+            req.body.Date_Of_Birth = DateOfBirth;
 
-/**
- * @swagger
- * /api/auth/logout:
- *   post:
- *     summary: Đăng xuất khỏi hệ thống (Yêu cầu đăng nhập)
- *     description: >
- *       API này cho phép người dùng đã đăng nhập đăng xuất khỏi hệ thống.
- *       Khi gọi API này, token JWT hiện tại của người dùng sẽ bị vô hiệu hóa.
- *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Đăng xuất thành công.
- *       401:
- *         description: Chưa đăng nhập.
- */
-router.post('/logout', authMiddleware, authController.logout);
+            const mappedData = {
+                Full_Name: FullName,
+                Email,
+                Password,
+                Phone_Number: PhoneNumber,
+                Date_Of_Birth: DateOfBirth,
+                Sex,
+                Address,
+            };
 
-/**
- * @swagger
- * /api/auth/password:
- *   put:
- *     summary: Thay đổi mật khẩu người dùng hiện tại (Yêu cầu đăng nhập)
- *     description: >
- *       API này cho phép người dùng đã đăng nhập thay đổi mật khẩu của họ.
- *       Người dùng cần cung cấp mật khẩu hiện tại để xác thực cũng như mật khẩu mới.
- *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - OldPassword
- *               - NewPassword
- *               - ConfirmNewPassword
- *             properties:
- *               OldPassword:
- *                 type: string
- *                 example: oldPassword123
- *               NewPassword:
- *                 type: string
- *                 example: newPassword456
- *               ConfirmNewPassword:
- *                 type: string
- *                 example: newPassword456
- *     responses:
- *       200:
- *         description: Đổi mật khẩu thành công.
- *       400:
- *         description: Mật khẩu cũ không đúng hoặc mật khẩu mới không hợp lệ.
- *       401:
- *         description: Chưa đăng nhập.
- */
-router.put('/password', authMiddleware, authValidation.changePassword, authController.changePassword);
+            logger.info(`Mapped data for AuthService: ${JSON.stringify(mappedData)}`);
+            logger.info('Field mapping:');
+            logger.info(`- FullName -> Full_Name: ${FullName} -> ${mappedData.Full_Name}`);
+            logger.info(`- PhoneNumber -> Phone_Number: ${PhoneNumber} -> ${mappedData.Phone_Number}`);
+            logger.info(`- DateOfBirth -> Date_Of_Birth: ${DateOfBirth} -> ${mappedData.Date_Of_Birth}`);
 
-/**
- * @swagger
- * /api/auth/profile:
- *   get:
- *     summary: Lấy thông tin cá nhân của người dùng hiện tại (Yêu cầu đăng nhập)
- *     description: >
- *       API này cho phép người dùng đã đăng nhập xem thông tin cá nhân của họ.
- *       Thông tin bao gồm ID, họ tên, email, số điện thoại, vai trò và các thông tin khác.
- *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Thông tin cá nhân của người dùng.
- *       401:
- *         description: Chưa đăng nhập.
- *       404:
- *         description: Không tìm thấy thông tin người dùng.
- *   put:
- *     summary: Cập nhật thông tin cá nhân của người dùng hiện tại (Yêu cầu đăng nhập)
- *     description: >
- *       API này cho phép người dùng đã đăng nhập cập nhật thông tin cá nhân của họ.
- *       Các thông tin có thể cập nhật bao gồm họ tên, ngày sinh, giới tính, số điện thoại và địa chỉ.
- *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               FullName:
- *                 type: string
- *                 example: Nguyễn Văn B
- *               DateOfBirth:
- *                 type: string
- *                 format: date
- *                 example: 1990-01-01
- *               Sex:
- *                 type: string
- *                 example: Male
- *               PhoneNumber:
- *                 type: string
- *                 example: "0901234568"
- *               Address:
- *                 type: string
- *                 example: 456 Đường DEF, Quận XYZ, TP.HCM
- *     responses:
- *       200:
- *         description: Cập nhật thông tin thành công.
- *       400:
- *         description: Dữ liệu không hợp lệ.
- *       401:
- *         description: Chưa đăng nhập.
- */
-router.get('/profile', authMiddleware, authController.getUserProfile);
-router.put('/profile', authMiddleware, memberValidation.updateProfile, authController.updateProfile);
+            const result = await AuthService.register(mappedData);
+            return res.status(201).json(result);
+        } catch (err) {
+            logger.error(`[authController.register] Error: ${err.message}`);
+            return res.status(400).json({
+                success: false,
+                message: err.message,
+            });
+        }
+    }
 
-// Routes for showing and handling the password reset form
-router.get('/reset-password-form', authController.showResetPasswordForm);       // Page to enter new password
-router.post('/perform-password-reset', express.json(), authValidation.resetPassword, authController.performPasswordReset); // Endpoint to submit new password
+    async updateProfile(req, res) {
+        try {
+            logger.info('=== UPDATE PROFILE DEBUG ===');
+            logger.info(`req.user: ${JSON.stringify(req.user)}`);
+            logger.info(`Raw request body: ${JSON.stringify(req.body)}`);
 
-module.exports = router;
+            // FIX: Use the same robust logic as getUserProfile to find the user ID
+            let userId = null;
+            if (req.user) {
+                if (req.user.id) userId = req.user.id;
+                else if (req.user.userId) userId = req.user.userId;
+                else if (req.user.User_ID) userId = req.user.User_ID;
+            }
+
+            if (!userId) {
+                logger.error('[authController.updateProfile] No userId found in req.user');
+                return res.status(401).json({
+                    message: 'Không tìm thấy thông tin người dùng trong token',
+                });
+            }
+
+            logger.info(`[authController.updateProfile] Updating profile for user ID: ${userId}`);
+
+            const updateData = {};
+
+            if (req.body.FullName !== undefined) {
+                updateData.Full_Name = req.body.FullName;
+            }
+            if (req.body.Email !== undefined) {
+                updateData.Email = req.body.Email;
+            }
+            if (req.body.PhoneNumber !== undefined) {
+                updateData.Phone_Number = req.body.PhoneNumber;
+            }
+            if (req.body.DateOfBirth !== undefined) {
+                updateData.Date_Of_Birth = req.body.DateOfBirth;
+            }
+            // Handle both Sex and Gender fields, standardizing to Sex in database
+            if (req.body.Sex !== undefined) {
+                updateData.Sex = req.body.Sex;
+            } else if (req.body.Gender !== undefined) {
+                updateData.Sex = req.body.Gender;
+            }
+            if (req.body.Address !== undefined) {
+                updateData.Address = req.body.Address;
+            }
+
+            logger.info(`[authController.updateProfile] Mapped update data: ${JSON.stringify(updateData)}`);
+
+            if (Object.keys(updateData).length === 0) {
+                logger.warn('[authController.updateProfile] No data to update');
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không có dữ liệu để cập nhật',
+                });
+            }
+
+            logger.info(`[authController.updateProfile] Calling UserRepository.update...`);
+            const updateResult = await UserRepository.update(userId, updateData);
+
+            logger.info(`[authController.updateProfile] Update result: ${updateResult}`);
+
+            if (updateResult) {
+                logger.info(`[authController.updateProfile] Profile updated successfully for user: ${userId}`);
+
+                const updatedUser = await UserRepository.findById(userId);
+                logger.info(`[authController.updateProfile] Retrieved updated user data`);
+
+                const responseData = {
+                    success: true,
+                    message: 'Cập nhật thông tin thành công',
+                    user: {
+                        id: updatedUser.User_ID,
+                        fullName: updatedUser.Full_Name,
+                        email: updatedUser.Email,
+                        phoneNumber: updatedUser.Phone_Number,
+                        address: updatedUser.Address,
+                        dateOfBirth: updatedUser.Date_Of_Birth,
+                        sex: updatedUser.Sex,
+                        role: updatedUser.Role,
+                        accountStatus: updatedUser.Account_Status,
+                    },
+                };
+
+                return res.json(responseData);
+            } else {
+                logger.error(`[authController.updateProfile] Update failed for user: ${userId}`);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Không thể cập nhật thông tin. Vui lòng thử lại.',
+                });
+            }
+        } catch (error) {
+            logger.error(`[authController.updateProfile] Error: ${error.message}`);
+            return res.status(500).json({
+                success: false,
+                message: 'Đã xảy ra lỗi khi cập nhật thông tin người dùng',
+            });
+        }
+    }
+
+    async changePassword(req, res) {
+        try {
+            logger.info('[authController.changePassword] === BẮT ĐẦU CHANGE PASSWORD ===');
+            logger.info(`[authController.changePassword] req.user: ${JSON.stringify(req.user)}`);
+            logger.info(`[authController.changePassword] Raw request body keys: ${Object.keys(req.body)}`);
+
+            const userId = req.user?.id || req.user?.userId;
+
+            if (!userId) {
+                logger.error('[authController.changePassword] ❌ KHÔNG TÌM THẤY USER ID trong req.user');
+                return res.status(401).json({
+                    success: false,
+                    message: 'Không tìm thấy thông tin người dùng trong token',
+                    error: 'USER_ID_NOT_FOUND'
+                });
+            }
+
+            logger.info(`[authController.changePassword] ✅ User ID: ${userId}`);
+
+            // Extract passwords from multiple possible field names
+            const currentPassword = req.body.currentPassword || req.body.OldPassword || req.body.oldPassword;
+            const newPassword = req.body.newPassword || req.body.NewPassword;
+            const confirmPassword = req.body.confirmPassword || req.body.ConfirmNewPassword || req.body.confirmNewPassword;
+
+            logger.info(`[authController.changePassword] Field mapping:`);
+            logger.info(`[authController.changePassword]   - currentPassword provided: ${!!currentPassword}`);
+            logger.info(`[authController.changePassword]   - newPassword provided: ${!!newPassword}`);
+            logger.info(`[authController.changePassword]   - confirmPassword provided: ${!!confirmPassword}`);
+
+            // Validation - Current Password
+            if (!currentPassword) {
+                logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Missing current password`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'currentPassword', msg: 'Mật khẩu hiện tại không được để trống' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            // Validation - New Password
+            if (!newPassword) {
+                logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Missing new password`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'newPassword', msg: 'Mật khẩu mới không được để trống' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            // Validation - Confirm Password
+            if (!confirmPassword) {
+                logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Missing confirm password`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'confirmPassword', msg: 'Xác nhận mật khẩu không được để trống' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            // Validation - Password Match
+            if (newPassword !== confirmPassword) {
+                logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Passwords do not match`);
+                logger.warn(`[authController.changePassword]   - New password length: ${newPassword.length}`);
+                logger.warn(`[authController.changePassword]   - Confirm password length: ${confirmPassword.length}`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'confirmPassword', msg: 'Mật khẩu mới và xác nhận mật khẩu không khớp' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            // Validation - Password Strength
+            logger.info(`[authController.changePassword] Kiểm tra độ mạnh mật khẩu mới...`);
+            const passwordValidation = checkPasswordStrength(newPassword);
+            logger.info(`[authController.changePassword] Password validation result:`);
+            logger.info(`[authController.changePassword]   - Valid: ${passwordValidation.isValid}`);
+            logger.info(`[authController.changePassword]   - Score: ${passwordValidation.score}/5`);
+            logger.info(`[authController.changePassword]   - Checks: ${JSON.stringify(passwordValidation.checks)}`);
+
+            if (!passwordValidation.isValid) {
+                logger.warn(`[authController.changePassword] ❌ PASSWORD VALIDATION FAILED:`);
+                passwordValidation.errors.forEach((error, index) => {
+                    logger.warn(`[authController.changePassword]   ${index + 1}. ${error}`);
+                });
+
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'newPassword', msg: passwordValidation.errors[0] }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            logger.info(`[authController.changePassword] ✅ Password validation passed`);
+
+            // Check if new password is same as current password
+            if (currentPassword === newPassword) {
+                logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - New password same as current`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'newPassword', msg: 'Mật khẩu mới phải khác mật khẩu hiện tại' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            logger.info(`[authController.changePassword] Gọi AuthService.changePassword...`);
+
+            const result = await AuthService.changePassword(userId, {
+                oldPassword: currentPassword,
+                newPassword: newPassword,
+            });
+
+            logger.info(`[authController.changePassword] ✅ AuthService result: ${JSON.stringify(result)}`);
+
+            logger.info(`[authController.changePassword] === ✅ CHANGE PASSWORD THÀNH CÔNG ===`);
+            logger.info(`[authController.changePassword] User ID: ${userId}`);
+
+            return res.json({
+                success: true,
+                message: 'Đổi mật khẩu thành công',
+                description: 'Mật khẩu của bạn đã được cập nhật thành công'
+            });
+
+        } catch (error) {
+            logger.error(`[authController.changePassword] === ❌ LỖI TRONG QUÁ TRÌNH CHANGE PASSWORD ===`);
+            logger.error(`[authController.changePassword] Error message: ${error.message}`);
+            logger.error(`[authController.changePassword] Error stack: ${error.stack}`);
+            
+            // Xử lý validation error từ service
+            if (error.validationData) {
+                logger.info(`[authController.changePassword] Trả về validation error response từ service`);
+                return res.status(400).json(error.validationData);
+            }
+            
+            // Xử lý các loại error cụ thể
+            if (error.message.includes('Mật khẩu cũ không chính xác') || error.message.includes('Mật khẩu hiện tại không đúng')) {
+                logger.warn(`[authController.changePassword] ❌ Wrong current password`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'currentPassword', msg: 'Mật khẩu hiện tại không chính xác' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+            
+            if (error.message.includes('Không tìm thấy người dùng')) {
+                logger.error(`[authController.changePassword] ❌ User not found`);
+                return res.status(404).json({
+                    success: false,
+                    message: 'Không tìm thấy thông tin người dùng',
+                    error: 'USER_NOT_FOUND'
+                });
+            }
+            
+            if (error.message.includes('Mật khẩu mới phải khác mật khẩu hiện tại')) {
+                logger.warn(`[authController.changePassword] ❌ New password same as current`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'newPassword', msg: 'Mật khẩu mới phải khác mật khẩu hiện tại' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+            
+            logger.error(`[authController.changePassword] ❌ Unhandled error occurred`);
+            return res.status(500).json({
+                success: false,
+                message: 'Đã xảy ra lỗi hệ thống khi đổi mật khẩu',
+                error: error.message,
+                details: 'Vui lòng thử lại sau hoặc liên hệ hỗ trợ nếu vấn đề tiếp tục xảy ra'
+            });
+        }
+    }
+
+    async resetPassword(req, res) {
+        try {
+            const email = req.body.Email || req.body.email;
+            if (!email) {
+                return res.status(400).json({ message: 'Vui lòng cung cấp địa chỉ email.', success: false });
+            }
+            await AuthService.initiatePasswordReset(email);
+            return res.json({ message: 'Nếu email của bạn tồn tại trong hệ thống, một liên kết đặt lại mật khẩu đã được gửi.', success: true });
+        } catch (err) {
+            logger.error(`[authController.resetPassword] Error: ${err.message}`);
+            if (err.message === 'Email không tồn tại trong hệ thống.') {
+                return res.status(404).json({ message: err.message, success: false });
+            }
+            return res.status(400).json({ message: err.message, success: false });
+        }
+    }
+
+    async getUserProfile(req, res) {
+        try {
+            // Kiểm tra toàn diện về req.user
+            if (!req.user) {
+                logger.error('[authController.getUserProfile] req.user is undefined or null');
+                return res.status(401).json({
+                    message: 'Không thể xác thực người dùng, vui lòng đăng nhập lại'
+                });
+            }
+
+            // Tìm userId từ nhiều khả năng khác nhau
+            let userId = null;
+            if (req.user.id) {
+                userId = req.user.id;
+            } else if (req.user.userId) {
+                userId = req.user.userId;
+            } else if (req.user.User_ID) {
+                userId = req.user.User_ID;
+            }
+
+            if (!userId) {
+                logger.error('[authController.getUserProfile] No userId found in req.user');
+                return res.status(401).json({
+                    message: 'Không tìm thấy thông tin người dùng trong token',
+                });
+            }
+
+            logger.info(`[authController.getUserProfile] Looking for user with ID: ${userId}`);
+
+            const user = await UserRepository.findById(userId);
+
+            if (!user) {
+                logger.warn(`[authController.getUserProfile] User not found: ${userId}`);
+                return res.status(404).json({
+                    message: 'Không tìm thấy thông tin người dùng'
+                });
+            }
+
+            logger.info(`[authController.getUserProfile] UserRepository result: Found`);
+
+            // Prepare user profile response
+            const userProfile = {
+                User_ID: user.User_ID,
+                Full_Name: user.Full_Name,
+                Email: user.Email,
+                Phone: user.Phone,
+                Date_Of_Birth: user.Date_Of_Birth,
+                Gender: user.Gender,
+                Role: user.Role,
+                Cinema_ID: user.Cinema_ID,
+                Loyalty_Points: user.Loyalty_Points,
+                Avatar: user.Avatar,
+                Created_At: user.Created_At,
+                Status: user.Status
+            };
+
+            logger.info(`[authController.getUserProfile] Success for user: ${user.Email}`);
+
+            return res.status(200).json({
+                success: true,
+                user: userProfile
+            });
+
+        } catch (error) {
+            logger.error(`[authController.getUserProfile] Database error: ${error.message}`);
+            return res.status(500).json({
+                message: 'Đã xảy ra lỗi khi lấy thông tin người dùng'
+            });
+        }
+    }
+
+    async checkAccountStatus(req, res) {
+        try {
+            const email = req.query.email;
+            const isLocked = await AccountLockingService.isAccountLocked(email);
+            if (isLocked) {
+                const remainingMinutes = await AccountLockingService.getRemainingLockTime(email);
+                return res.json({
+                    isLocked: true,
+                    remainingMinutes,
+                    message: `Tài khoản đang bị khóa. Còn ${remainingMinutes} phút để mở khóa.`,
+                });
+            } else {
+                return res.json({
+                    isLocked: false,
+                    message: 'Tài khoản đang hoạt động bình thường.',
+                });
+            }
+        } catch (err) {
+            logger.error(`[authController.checkAccountStatus] Error: ${err.message}`);
+            return res.status(400).json({ message: err.message });
+        }
+    }
+
+    async unlockAccount(req, res) {
+        try {
+            const { email } = req.body;
+            const result = await AuthService.unlockAccount(email);
+            if (result) {
+                return res.json({ message: 'Tài khoản đã được mở khóa thành công' });
+            } else {
+                return res.status(404).json({ message: 'Không tìm thấy tài khoản' });
+            }
+        } catch (err) {
+            logger.error(`[authController.unlockAccount] Error: ${err.message}`);
+            return res.status(400).json({ message: err.message });
+        }
+    }
+
+    async verifyEmail(req, res) {
+        try {
+            logger.info('=== VERIFY EMAIL CONTROLLER DEBUG ===');
+            logger.info(`Request query: ${JSON.stringify(req.query)}`);
+            logger.info(`Request method: ${req.method}`);
+            logger.info(`Request URL: ${req.url}`);
+
+            const { token } = req.query;
+
+            if (!token) {
+                logger.info('[authController.verifyEmail] No token provided in query');
+                return res.status(400).send(createHtmlResponse(
+                    false,
+                    'Lỗi xác thực',
+                    'Token xác thực không được cung cấp.',
+                    'Vui lòng kiểm tra lại đường dẫn trong email.'
+                ));
+            }
+
+            logger.info(`[authController.verifyEmail] Processing token: ${token.substring(0, 10)}...`);
+
+            const result = await EmailVerificationService.verifyTokenAndActivateUser(token);
+
+            logger.info(`[authController.verifyEmail] EmailVerificationService result: ${JSON.stringify(result)}`);
+
+            if (result.success) {
+                logger.info(`[authController.verifyEmail] Email verification successful for user ${result.userId}`);
+
+                return res.status(200).send(createHtmlResponse(
+                    true,
+                    'Xác thực thành công!',
+                    result.message,
+                    'Bạn có thể đóng trang này và đăng nhập vào tài khoản của mình.',
+                    process.env.CLIENT_URL || 'http://localhost:5173'
+                ));
+            } else {
+                logger.info(`[authController.verifyEmail] Email verification failed: ${result.message}`);
+
+                return res.status(400).send(createHtmlResponse(
+                    false,
+                    'Xác thực thất bại',
+                    result.message,
+                    'Vui lòng thử lại hoặc liên hệ hỗ trợ nếu vấn đề vẫn tiếp diễn.'
+                ));
+            }
+        } catch (error) {
+            logger.error(`[authController.verifyEmail] Error: ${error.message}`);
+            return res.status(500).send(createHtmlResponse(
+                false,
+                'Lỗi hệ thống',
+                'Đã xảy ra lỗi khi xác thực email. Vui lòng thử lại sau.',
+                'Nếu vấn đề vẫn tiếp diễn, vui lòng liên hệ bộ phận hỗ trợ.'
+            ));
+        }
+    }
+
+    async resendVerificationEmail(req, res) {
+        try {
+            const { email } = req.body;
+            if (!email) return res.status(400).json({ success: false, message: 'Email không được để trống' });
+
+            const user = await UserRepository.findByEmail(email);
+            if (!user) return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản với email này' });
+
+            if (user.Account_Status !== 'Pending_Verification' && user.Account_Status !== 'Pending') {
+                return res.status(400).json({ success: false, message: 'Tài khoản đã được xác thực hoặc không ở trạng thái chờ xác thực' });
+            }
+
+            const emailSent = await EmailVerificationService.sendVerificationEmail(user.Email, user.Full_Name, user.User_ID);
+            if (emailSent) {
+                return res.json({ success: true, message: 'Email xác thực đã được gửi lại. Vui lòng kiểm tra hộp thư của bạn.' });
+            } else {
+                return res.status(500).json({ success: false, message: 'Không thể gửi lại email xác thực. Vui lòng thử lại sau.' });
+            }
+        } catch (err) {
+            logger.error(`[authController.resendVerificationEmail] Error: ${err.message}`);
+            return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi gửi lại email xác thực' });
+        }
+    }
+
+    async checkEmailVerification(req, res) {
+        try {
+            const { email } = req.query;
+            if (!email) return res.status(400).json({ success: false, message: 'Email không được để trống' });
+
+            const user = await UserRepository.findByEmail(email);
+            if (!user) return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản với email này' });
+
+            const isVerified = user.Account_Status === 'Active';
+            return res.json({
+                success: true,
+                isVerified,
+                status: user.Account_Status,
+                message: isVerified ? 'Email đã được xác thực' : 'Email chưa được xác thực',
+            });
+        } catch (err) {
+            logger.error(`[authController.checkEmailVerification] Error: ${err.message}`);
+            return res.status(500).json({ success: false, message: 'Đã xảy ra lỗi khi kiểm tra trạng thái xác thực email' });
+        }
+    }
+
+    // Route to show the password reset form
+    async showResetPasswordForm(req, res) {
+        const { token, newUser } = req.query;
+        const isNewUser = newUser === 'true';
+
+        try {
+            if (!token) {
+                logger.warn('[authController.showResetPasswordForm] No token provided');
+                return res.status(400).send(createHtmlResponse('Lỗi', 'Không có token', 'Vui lòng sử dụng đường dẫn được cung cấp trong email.'));
+            }
+
+            const title = isNewUser ? 'Thiết lập mật khẩu mới' : 'Đặt lại mật khẩu';
+            const formDesc = isNewUser ? 'Vui lòng tạo mật khẩu cho tài khoản của bạn' : 'Vui lòng nhập mật khẩu mới cho tài khoản của bạn';
+            const buttonText = isNewUser ? 'Thiết lập mật khẩu' : 'Đặt lại mật khẩu';
+
+            const htmlForm = `
+            <!DOCTYPE html>
+            <html lang="vi">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${title} - Galaxy Cinema</title>
+                <style>
+                    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8f9fa; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; color: #333; }
+                    .container { background: white; border-radius: 10px; box-shadow: 0px 0px 20px rgba(0, 0, 0, 0.1); width: 400px; padding: 30px; }
+                    .logo-container { text-align: center; margin-bottom: 20px; }
+                    h2 { color: #d9534f; text-align: center; margin-bottom: 20px; }
+                    p { margin-bottom: 20px; }
+                    label { display: block; margin-bottom: 5px; font-weight: 600; }
+                    .form-group { margin-bottom: 20px; }
+                    input[type="password"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; box-sizing: border-box; }
+                    button { background-color: #d9534f; color: white; border: none; padding: 12px 20px; width: 100%; border-radius: 5px; cursor: pointer; font-size: 16px; }
+                    button:hover { background-color: #c9302c; }
+                    .error-message { color: #d9534f; margin-top: 5px; font-size: 14px; display: none; }
+                    .logo { max-width: 120px; }
+                    .password-requirements { font-size: 13px; color: #666; margin-top: 5px; background-color: #f8f9fa; padding: 10px; border-radius: 4px; }
+                    .alert { padding: 10px; border-radius: 4px; margin-bottom: 15px; color: white; font-weight: 500; display: none; }
+                    .alert-danger { background-color: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="logo-container">
+                        <img src="https://stp-cinema.vercel.app/imgs/logos/STPcinema.png" alt="Galaxy Cinema Logo" class="logo">
+                    </div>
+                    <h2>${title}</h2>
+                    <p style="text-align: center; margin-bottom: 20px;">${formDesc}</p>
+                    
+                    <!-- Thông báo lỗi -->
+                    <div id="errorAlert" class="alert alert-danger"></div>
+                    
+                    <form id="passwordResetForm">
+                        <input type="hidden" name="token" value="${token}">
+                        <input type="hidden" name="newUser" value="${isNewUser}">
+                        <div class="form-group">
+                            <label for="newPassword">Mật khẩu mới:</label>
+                            <input type="password" id="newPassword" name="newPassword" required>
+                            <div class="error-message" id="newPasswordError"></div>
+                            <div class="password-requirements">
+                                Mật khẩu phải có:
+                                <ul>
+                                    <li>Ít nhất 8 ký tự</li>
+                                    <li>Tối đa 50 ký tự</li>
+                                    <li>Ít nhất 1 chữ cái in hoa</li>
+                                    <li>Ít nhất 1 ký tự đặc biệt (!@#$%^&*(),.?":{}|<>)</li>
+                                    <li>Ít nhất 1 chữ số</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmPassword">Xác nhận mật khẩu mới:</label>
+                            <input type="password" id="confirmPassword" name="confirmPassword" required>
+                            <div class="error-message" id="confirmPasswordError"></div>
+                        </div>
+                        <button type="submit">${buttonText}</button>
+                    </form>
+                </div>
+
+                <script>
+                    document.getElementById('passwordResetForm').addEventListener('submit', function(event) {
+                        event.preventDefault();
+                        
+                        // Ẩn các thông báo lỗi cũ
+                        document.getElementById('errorAlert').style.display = 'none';
+                        document.getElementById('newPasswordError').style.display = 'none';
+                        document.getElementById('confirmPasswordError').style.display = 'none';
+                        
+                        const token = document.querySelector('input[name="token"]').value;
+                        const newUser = document.querySelector('input[name="newUser"]').value;
+                        const newPassword = document.getElementById('newPassword').value;
+                        const confirmPassword = document.getElementById('confirmPassword').value;
+                        
+                        // Validate dữ liệu form trước khi gửi
+                        let hasError = false;
+                        
+                        if (!newPassword) {
+                            document.getElementById('newPasswordError').textContent = 'Vui lòng nhập mật khẩu mới';
+                            document.getElementById('newPasswordError').style.display = 'block';
+                            hasError = true;
+                        }
+                        
+                        if (!confirmPassword) {
+                            document.getElementById('confirmPasswordError').textContent = 'Vui lòng xác nhận mật khẩu';
+                            document.getElementById('confirmPasswordError').style.display = 'block';
+                            hasError = true;
+                        }
+                        
+                        if (newPassword !== confirmPassword) {
+                            document.getElementById('confirmPasswordError').textContent = 'Mật khẩu xác nhận không khớp';
+                            document.getElementById('confirmPasswordError').style.display = 'block';
+                            hasError = true;
+                        }
+                        
+                        if (hasError) return;
+                        
+                        // Gửi request API bằng fetch
+                        fetch('/api/auth/perform-password-reset', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ token, newUser, newPassword, confirmPassword })
+                        })
+                        .then(response => {
+                            if (!response.ok) {
+                                return response.json().then(data => {
+                                    throw new Error(data.message || 'Có lỗi xảy ra khi đặt lại mật khẩu');
+                                });
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            // Chuyển hướng sau khi thành công
+                            window.location.href = data.redirectUrl || '/login';
+                        })
+                        .catch(error => {
+                            // Hiển thị lỗi
+                            const errorAlert = document.getElementById('errorAlert');
+                            errorAlert.textContent = error.message || 'Có lỗi xảy ra khi đặt lại mật khẩu';
+                            errorAlert.style.display = 'block';
+                            
+                            // Nếu có các lỗi cụ thể cho từng trường
+                            if (error.errors) {
+                                error.errors.forEach(err => {
+                                    if (err.path === 'newPassword') {
+                                        document.getElementById('newPasswordError').textContent = err.msg;
+                                        document.getElementById('newPasswordError').style.display = 'block';
+                                    }
+                                });
+                            }
+                        });
+                    });
+                </script>
+            </body>
+            </html>
+            `;
+            res.send(htmlForm);
+        } catch (error) {
+            logger.error(`[authController.showResetPasswordForm] Error: ${error.message}`);
+            res.status(400).send(createHtmlResponse('Lỗi xác thực Token', error.message, 'Token của bạn có thể không hợp lệ hoặc đã hết hạn. Vui lòng thử yêu cầu đặt lại mật khẩu một lần nữa.'));
+        }
+    }
+
+    // Route to handle the password reset form submission
+    async performPasswordReset(req, res) {
+        const { token, newPassword, confirmPassword, newUser } = req.body;
+        const isNewUser = newUser === 'true';
+
+        try {
+            logger.info(`[authController.performPasswordReset] === BẮT ĐẦU RESET PASSWORD ===`);
+            logger.info(`[authController.performPasswordReset] Token prefix: ${token ? token.substring(0, 10) + '...' : 'null'}`);
+            logger.info(`[authController.performPasswordReset] isNewUser: ${isNewUser}`);
+            logger.info(`[authController.performPasswordReset] Password provided: ${!!newPassword}`);
+            logger.info(`[authController.performPasswordReset] Confirm password provided: ${!!confirmPassword}`);
+
+            // Validate required fields
+            if (!token || !newPassword || !confirmPassword) {
+                logger.warn(`[authController.performPasswordReset] ❌ VALIDATION FAILED - Missing required fields:`);
+                logger.warn(`[authController.performPasswordReset]   - Token: ${!!token}`);
+                logger.warn(`[authController.performPasswordReset]   - NewPassword: ${!!newPassword}`);
+                logger.warn(`[authController.performPasswordReset]   - ConfirmPassword: ${!!confirmPassword}`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Thiếu thông tin bắt buộc: token, mật khẩu mới và xác nhận mật khẩu',
+                    errors: [
+                        !token && 'Token không được cung cấp',
+                        !newPassword && 'Mật khẩu mới không được để trống',
+                        !confirmPassword && 'Xác nhận mật khẩu không được để trống'
+                    ].filter(Boolean)
+                });
+            }
+
+            // Check password match
+            if (newPassword !== confirmPassword) {
+                logger.warn(`[authController.performPasswordReset] ❌ VALIDATION FAILED - Passwords do not match`);
+                logger.warn(`[authController.performPasswordReset]   - New password length: ${newPassword.length}`);
+                logger.warn(`[authController.performPasswordReset]   - Confirm password length: ${confirmPassword.length}`);
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'confirmPassword', msg: 'Mật khẩu xác nhận không khớp với mật khẩu mới' }
+                ]);
+                return res.status(400).json(detailedResponse);
+            }
+
+            // Validate password strength
+            logger.info(`[authController.performPasswordReset] Kiểm tra độ mạnh mật khẩu...`);
+            const passwordValidation = checkPasswordStrength(newPassword);
+            logger.info(`[authController.performPasswordReset] Password validation result:`);
+            logger.info(`[authController.performPasswordReset]   - Valid: ${passwordValidation.isValid}`);
+            logger.info(`[authController.performPasswordReset]   - Score: ${passwordValidation.score}/5`);
+            logger.info(`[authController.performPasswordReset]   - Checks: ${JSON.stringify(passwordValidation.checks)}`);
+            
+            if (!passwordValidation.isValid) {
+                logger.warn(`[authController.performPasswordReset] ❌ PASSWORD VALIDATION FAILED:`);
+                passwordValidation.errors.forEach((error, index) => {
+                    logger.warn(`[authController.performPasswordReset]   ${index + 1}. ${error}`);
+                });
+                
+                const detailedResponse = createDetailedValidationResponse([
+                    { path: 'newPassword', msg: passwordValidation.errors[0] }
+                ]);
+                
+                return res.status(400).json(detailedResponse);
+            }
+            logger.info(`[authController.performPasswordReset] ✅ Password validation passed`);
+
+            // Check token in cache
+            const tokenCacheKey = isNewUser
+                ? `password_setup_token_${token}`
+                : `password_reset_token_${token}`;
+
+            logger.info(`[authController.performPasswordReset] Tìm token trong cache với key: ${tokenCacheKey}`);
+
+            let storedData = cache.get(tokenCacheKey);
+            logger.info(`[authController.performPasswordReset] Token found in primary cache: ${!!storedData}`);
+
+            if (!storedData) {
+                // Try alternate token key for compatibility
+                const alternateTokenCacheKey = isNewUser
+                    ? `password_reset_token_${token}`
+                    : `password_setup_token_${token}`;
+
+                logger.info(`[authController.performPasswordReset] Thử với alternate key: ${alternateTokenCacheKey}`);
+                const alternateData = cache.get(alternateTokenCacheKey);
+                logger.info(`[authController.performPasswordReset] Token found in alternate cache: ${!!alternateData}`);
+
+                if (alternateData) {
+                    storedData = alternateData;
+                } else {
+                    logger.error(`[authController.performPasswordReset] ❌ TOKEN NOT FOUND hoặc ĐÃ HẾT HẠN:`);
+                    logger.error(`[authController.performPasswordReset]   - Primary key: ${tokenCacheKey}`);
+                    logger.error(`[authController.performPasswordReset]   - Alternate key: ${alternateTokenCacheKey}`);
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
+                        error: 'TOKEN_EXPIRED_OR_INVALID'
+                    });
+                }
+            }
+
+            const userId = storedData.userId;
+            logger.info(`[authController.performPasswordReset] ✅ Token hợp lệ - User ID: ${userId}`);
+
+            // Find user by ID
+            logger.info(`[authController.performPasswordReset] Tìm user với ID: ${userId}`);
+            const user = await UserRepository.findById(userId);
+            if (!user) {
+                logger.error(`[authController.performPasswordReset] ❌ KHÔNG TÌM THẤY USER với ID: ${userId}`);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không tìm thấy người dùng tương ứng với token này',
+                    error: 'USER_NOT_FOUND'
+                });
+            }
+
+            logger.info(`[authController.performPasswordReset] ✅ Tìm thấy user:`);
+            logger.info(`[authController.performPasswordReset]   - Email: ${user.Email}`);
+            logger.info(`[authController.performPasswordReset]   - Current Status: ${user.Account_Status}`);
+            logger.info(`[authController.performPasswordReset]   - Role: ${user.Role}`);
+
+            // Hash new password
+            logger.info(`[authController.performPasswordReset] Băm mật khẩu mới...`);
+            const hashedPassword = await bcrypt.hash(newPassword, 10);
+            logger.info(`[authController.performPasswordReset] ✅ Mật khẩu đã được băm thành công`);
+
+            // Update user data using UserRepository
+            logger.info(`[authController.performPasswordReset] Cập nhật thông tin user...`);
+            const updateData = {
+                Password: hashedPassword
+            };
+
+            if (isNewUser) {
+                updateData.Account_Status = 'Active';
+                logger.info(`[authController.performPasswordReset] Đây là user mới - cập nhật status thành Active`);
+            }
+
+            logger.info(`[authController.performPasswordReset] Update data: ${JSON.stringify({
+                ...updateData,
+                Password: '[HIDDEN]'
+            })}`);
+
+            // Sử dụng UserRepository.update thay vì user.update
+            const updateResult = await UserRepository.update(userId, updateData);
+            logger.info(`[authController.performPasswordReset] ✅ Update result: ${JSON.stringify(updateResult)}`);
+
+            // Clear tokens from cache
+            logger.info(`[authController.performPasswordReset] Xóa tokens khỏi cache...`);
+            cache.del(tokenCacheKey);
+            const alternateTokenCacheKey = isNewUser
+                ? `password_reset_token_${token}`
+                : `password_setup_token_${token}`;
+            cache.del(alternateTokenCacheKey);
+            logger.info(`[authController.performPasswordReset] ✅ Đã xóa tokens:`);
+            logger.info(`[authController.performPasswordReset]   - Primary: ${tokenCacheKey}`);
+            logger.info(`[authController.performPasswordReset]   - Alternate: ${alternateTokenCacheKey}`);
+
+            // Create success messages
+            const successTitle = isNewUser ? 'Thiết lập mật khẩu thành công!' : 'Đặt lại mật khẩu thành công!';
+            const successMessage = isNewUser
+                ? 'Mật khẩu đã được thiết lập và tài khoản đã được kích hoạt'
+                : 'Mật khẩu đã được đặt lại thành công';
+            const successDesc = isNewUser
+                ? 'Bây giờ bạn có thể đăng nhập với tài khoản và mật khẩu mới'
+                : 'Bây giờ bạn có thể đăng nhập bằng mật khẩu mới';
+
+            logger.info(`[authController.performPasswordReset] === ✅ RESET PASSWORD THÀNH CÔNG ===`);
+            logger.info(`[authController.performPasswordReset] User: ${user.Email}`);
+            logger.info(`[authController.performPasswordReset] Type: ${isNewUser ? 'New User Setup' : 'Password Reset'}`);
+
+            return res.status(200).json({
+                success: true,
+                title: successTitle,
+                message: successMessage,
+                description: successDesc,
+                redirectUrl: process.env.CLIENT_LOGIN_URL || 'http://localhost:5173/login'
+            });
+
+        } catch (error) {
+            logger.error(`[authController.performPasswordReset] === ❌ LỖI TRONG QUÁ TRÌNH RESET PASSWORD ===`);
+            logger.error(`[authController.performPasswordReset] Error message: ${error.message}`);
+            logger.error(`[authController.performPasswordReset] Error stack: ${error.stack}`);
+            
+            return res.status(500).json({
+                success: false,
+                message: 'Đã có lỗi hệ thống trong quá trình đặt lại mật khẩu',
+                error: error.message,
+                details: 'Vui lòng thử lại sau hoặc liên hệ hỗ trợ nếu vấn đề tiếp tục xảy ra'
+            });
+        }
+    }
+}
+
+function createHtmlResponse(title, message, description, isSuccess = true, redirectUrl = null, redirectDelay = 3000) {
+    const successColor = '#28a745'; // Green for success
+    const errorColor = '#dc3545';   // Red for error
+    const noticeColor = '#17a2b8';  // Blue for general notice
+
+    let headerColor = isSuccess === true ? successColor : (isSuccess === false ? errorColor : noticeColor);
+    let statusMessage = isSuccess === true ? 'Thành công!' : (isSuccess === false ? 'Thất bại!' : 'Thông báo');
+
+    let redirectMeta = '';
+    let redirectMessage = '';
+    if (redirectUrl) {
+        redirectMeta = `<meta http-equiv="refresh" content="${redirectDelay / 1000};url=${redirectUrl}">`;
+        redirectMessage = `<p class="redirect-message">Bạn sẽ được chuyển hướng sau ${redirectDelay / 1000} giây...</p>`;
+    }
+
+    return `
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${redirectMeta}
+        <title>${title} - STP Cinema</title>
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; padding: 20px; box-sizing: border-box; }
+            .container { background-color: #ffffff; padding: 35px 45px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1); max-width: 550px; width: 100%; }
+            .header { padding-bottom: 15px; margin-bottom: 25px; border-bottom: 1px solid #e9ecef; }
+            .header h1 { font-size: 28px; color: ${headerColor}; margin: 0; }
+            .status-icon { font-size: 48px; margin-bottom: 20px; }
+            .message h2 { font-size: 22px; color: #343a40; margin-top: 0; margin-bottom: 10px; }
+            .message p { font-size: 16px; color: #495057; line-height: 1.6; margin-bottom: 25px; }
+            .description { font-size: 14px; color: #6c757d; margin-bottom: 30px; }
+            .redirect-message { font-size: 13px; color: #6c757d; font-style: italic; }
+            a.button { display: inline-block; padding: 12px 25px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-size: 16px; transition: background-color 0.2s ease-in-out; }
+            a.button:hover { background-color: #0056b3; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>${statusMessage}</h1>
+            </div>
+            <div class="message">
+                <h2>${title}</h2>
+                <p>${message}</p>
+            </div>
+            ${description ? `<div class="description"><p>${description}</p></div>` : ''}
+            ${redirectUrl && isSuccess ? `<a href="${redirectUrl}" class="button">Tiếp tục</a>` : ''}
+            ${redirectMessage}
+        </div>
+    </body>
+    </html>
+    `;
+}
+
+module.exports = new AuthController();
