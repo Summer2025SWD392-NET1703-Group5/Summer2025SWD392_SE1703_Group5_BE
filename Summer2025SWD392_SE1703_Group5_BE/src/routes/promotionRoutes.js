@@ -141,7 +141,7 @@ router.delete('/remove/:bookingId', authMiddleware, promotionController.removePr
  *       403:
  *         description: Không có quyền truy cập
  */
-router.get('/', authMiddleware, authorizeRoles('Admin', 'Staff', 'Manager'), promotionController.getAllPromotions);
+router.get('/', authMiddleware, authorizeRoles('Admin'), promotionController.getAllPromotions);
 
 /**
  * @swagger
@@ -354,5 +354,84 @@ router.put('/:id', authMiddleware, authorizeRoles('Admin'), promotionController.
  *         description: Không thể xóa khuyến mãi đang được sử dụng
  */
 router.delete('/:id', authMiddleware, authorizeRoles('Admin'), promotionController.deletePromotion);
+
+/**
+ * @swagger
+ * /api/promotions/customer/used-promotions:
+ *   get:
+ *     summary: Lấy danh sách mã khuyến mãi đã sử dụng của người dùng (Dành cho khách hàng)
+ *     description: API này cho phép người dùng đã đăng nhập xem lịch sử mã khuyến mãi đã sử dụng
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lấy danh sách mã khuyến mãi đã sử dụng thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       Promotion_ID:
+ *                         type: integer
+ *                         example: 1
+ *                       Title:
+ *                         type: string
+ *                         example: "Khuyến mãi ngày lễ"
+ *                       Promotion_Code:
+ *                         type: string
+ *                         example: "HOLIDAY2023"
+ *                       Discount_Type:
+ *                         type: string
+ *                         example: "Percentage"
+ *                       Discount_Value:
+ *                         type: number
+ *                         example: 10
+ *                       Applied_Date:
+ *                         type: string
+ *                         format: date-time
+ *                         example: "2023-12-20T08:30:00.000Z"
+ *                       Discount_Amount:
+ *                         type: number
+ *                         example: 20000
+ *                       Booking_ID:
+ *                         type: integer
+ *                         example: 123
+ *                       Booking_Status:
+ *                         type: string
+ *                         example: "Confirmed"
+ *                       Booking_Total:
+ *                         type: number
+ *                         example: 180000
+ *                       Movie_Name:
+ *                         type: string
+ *                         example: "The Avengers"
+ *                       Show_Date:
+ *                         type: string
+ *                         format: date
+ *                         example: "2023-12-20"
+ *                       Start_Time:
+ *                         type: string
+ *                         example: "19:30:00"
+ *                       Discount_Description:
+ *                         type: string
+ *                         example: "Giảm 10% (20.000 VND)"
+ *                 message:
+ *                   type: string
+ *                   example: "Lấy danh sách khuyến mãi đã sử dụng thành công"
+ *       401:
+ *         description: Chưa đăng nhập
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/customer/used-promotions', authMiddleware, promotionController.getUserPromotions);
 
 module.exports = router;

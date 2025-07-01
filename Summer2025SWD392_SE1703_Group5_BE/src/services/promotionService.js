@@ -590,40 +590,46 @@ class PromotionService {
                 return result;
             }
 
-            // Kiểm tra xem có đang sử dụng mã khuyến mãi nào khác không
-            const activePromotionUsages = await this.models.PromotionUsage.findAll({
+            // Kiểm tra xem người dùng đã sử dụng mã khuyến mãi này cho đơn hàng khác chưa
+            const userPromotionUsage = await this.models.PromotionUsage.findOne({
                 include: [
-                    {
-                        model: this.models.Promotion,
-                        as: 'Promotion',
-                        where: { Status: PROMOTION_STATUS.ACTIVE }
-                    },
                     {
                         model: this.models.TicketBooking,
                         as: 'TicketBooking',
-                        where: { Status: { [Op.ne]: 'Cancelled' } }
+                        where: { 
+                            Status: { [Op.ne]: 'Cancelled' },
+                            Booking_ID: { [Op.ne]: bookingId } // Không phải đơn hàng hiện tại
+                        }
                     }
                 ],
                 where: {
                     User_ID: userId,
+                    Promotion_ID: promotion.Promotion_ID,
                     HasUsed: true
                 },
                 transaction
             });
 
-            // Ghi log chi tiết các khuyến mãi đang sử dụng
-            activePromotionUsages.forEach(existingUsage => {
-                logger.info(`Active Usage: PromotionID=${existingUsage.Promotion_ID}, ` +
-                    `PromotionCode=${existingUsage.Promotion.Promotion_Code}, ` +
-                    `BookingID=${existingUsage.Booking_ID}, ` +
-                    `BookingStatus=${existingUsage.TicketBooking.Status}`);
-            });
-
-            // Kiểm tra xem có đang sử dụng mã khuyến mãi nào khác không
-            if (activePromotionUsages.some(pu => pu.Booking_ID !== bookingId)) {
+            if (userPromotionUsage) {
                 await transaction.rollback();
                 result.Success = false;
-                result.Message = 'Bạn đã có đơn hàng khác đang sử dụng mã khuyến mãi, mỗi người chỉ được sử dụng một mã tại một thời điểm';
+                result.Message = `Bạn đã sử dụng mã khuyến mãi ${promotionCode} cho một đơn hàng khác`;
+                return result;
+            }
+            
+            // Kiểm tra xem đơn hàng hiện tại đã có mã khuyến mãi chưa
+            const currentBookingPromotion = await this.models.PromotionUsage.findOne({
+                where: {
+                    Booking_ID: bookingId,
+                    HasUsed: true
+                },
+                transaction
+            });
+            
+            if (currentBookingPromotion) {
+                await transaction.rollback();
+                result.Success = false;
+                result.Message = 'Đơn hàng này đã áp dụng mã khuyến mãi';
                 return result;
             }
 
@@ -1147,8 +1153,6 @@ class PromotionService {
             return result;
         }
 
-        console.log(`Service - Validating promotion code: "${promotionCode}"`); // Log mã khuyến mãi để debug
-
         const promotion = await this.models.Promotion.findOne({
             where: { Promotion_Code: promotionCode }
         });
@@ -1449,6 +1453,54 @@ class PromotionService {
             month: '2-digit',
             year: 'numeric'
         }).format(date);
+    }
+
+    async getUserPromotions(userId) {
+        let pool;
+        try {
+            console.log(`Service: Lấy danh sách khuyến mãi đã sử dụng thành công của user ${userId}`);
+            pool = await getConnection();
+            
+            const result = await pool.request()
+                .input('userId', sql.Int, userId)
+                .query(`
+                    SELECT 
+                        p.Promotion_ID, p.Title, p.Promotion_Code, p.Discount_Type, p.Discount_Value,
+                        pu.Applied_Date, pu.Discount_Amount, pu.HasUsed,
+                        tb.Booking_ID, tb.Total_Amount as Booking_Total, tb.Status as Booking_Status,
+                        m.Movie_Name, s.Show_Date, s.Start_Time
+                    FROM [ksf00691_team03].[Promotion_Usage] pu
+                    JOIN [ksf00691_team03].[Promotions] p ON pu.Promotion_ID = p.Promotion_ID
+                    JOIN [ksf00691_team03].[Ticket_Bookings] tb ON pu.Booking_ID = tb.Booking_ID
+                    JOIN [ksf00691_team03].[Showtimes] s ON tb.Showtime_ID = s.Showtime_ID
+                    JOIN [ksf00691_team03].[Movies] m ON s.Movie_ID = m.Movie_ID
+                    WHERE pu.User_ID = @userId 
+                    AND pu.HasUsed = 1
+                    AND tb.Status != 'Cancelled'
+                    ORDER BY pu.Applied_Date DESC
+                `);
+            
+            // Thêm mô tả discount cho mỗi khuyến mãi
+            const formattedResults = result.recordset.map(promo => ({
+                ...promo,
+                Discount_Description: this.getDiscountDescription(promo.Discount_Type, promo.Discount_Value, promo.Discount_Amount)
+            }));
+            
+            console.log(`Đã tìm thấy ${formattedResults.length} khuyến mãi đã sử dụng thành công cho user ${userId}`);
+            return formattedResults;
+            
+        } catch (error) {
+            console.error(`Lỗi khi lấy danh sách khuyến mãi đã sử dụng cho user ${userId}:`, error);
+            return [];
+        }
+    }
+
+    getDiscountDescription(discountType, discountValue, discountAmount) {
+        if (discountType === DISCOUNT_TYPE.PERCENTAGE) {
+            return `Giảm ${discountValue}% (${this.formatCurrency(discountAmount)} VND)`;
+        } else {
+            return `Giảm ${this.formatCurrency(discountValue)} VND`;
+        }
     }
 }
 

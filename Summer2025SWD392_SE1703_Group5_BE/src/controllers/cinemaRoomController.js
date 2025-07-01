@@ -24,6 +24,17 @@ exports.getCinemaRoom = async (req, res) => {
     }
 };
 
+exports.getMoviesByRoom = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const movies = await cinemaRoomService.getMoviesByRoomId(id);
+        res.json(movies);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Có lỗi xảy ra khi lấy danh sách phim theo phòng chiếu' });
+    }
+};
+
 exports.createCinemaRoom = async (req, res) => {
     try {
         const model = req.body;
@@ -95,12 +106,44 @@ exports.createCinemaRoom = async (req, res) => {
     } catch (err) {
         console.error(`[createCinemaRoom] Error:`, err);
         if (err instanceof Error && err.message) {
+            // Check if the error message contains a suggested room name
+            if (err.message.includes('đã tồn tại trong rạp này. Bạn có thể sử dụng tên')) {
+                return res.status(400).json({
+                    message: err.message,
+                    type: 'DUPLICATE_NAME_WITH_SUGGESTION'
+                });
+            }
             return res.status(400).json({ message: err.message });
         }
         console.error(err);
         res.status(500).json({ message: 'Có lỗi xảy ra khi tạo phòng chiếu mới' });
     }
 };
+
+exports.updateCinemaRoom = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const model = req.body;
+        if (!model) return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
+        const room = await cinemaRoomService.updateCinemaRoom(id, model);
+        res.json(room);
+    } catch (err) {
+        if (err instanceof Error && err.message) {
+            // Check if the error message contains a suggested room name
+            if (err.message.includes('đã tồn tại trong rạp này. Bạn có thể sử dụng tên')) {
+                return res.status(400).json({
+                    message: err.message,
+                    type: 'DUPLICATE_NAME_WITH_SUGGESTION'
+                });
+            }
+            if (err.message.includes('không tồn tại')) return res.status(404).json({ message: err.message });
+            return res.status(400).json({ message: err.message });
+        }
+        console.error(err);
+        res.status(500).json({ message: 'Có lỗi xảy ra khi cập nhật phòng chiếu' });
+    }
+};
+
 exports.deleteCinemaRoom = async (req, res) => {
     try {
         const id = req.params.id;
@@ -116,3 +159,31 @@ exports.deleteCinemaRoom = async (req, res) => {
     }
 };
 
+exports.checkCinemaRoomStatus = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const result = await cinemaRoomService.checkCinemaRoomStatus(id);
+        res.json(result);
+    } catch (err) {
+        if (err instanceof Error && err.message && err.message.includes('không tồn tại')) {
+            return res.status(404).json({ message: err.message });
+        }
+        console.error(err);
+        res.status(500).json({ message: 'Có lỗi xảy ra khi kiểm tra tình trạng phòng chiếu' });
+    }
+};
+
+exports.deactivateCinemaRoom = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const result = await cinemaRoomService.deactivateCinemaRoom(id);
+        res.json(result);
+    } catch (err) {
+        if (err instanceof Error && err.message) {
+            if (err.message.includes('không tồn tại')) return res.status(404).json({ message: err.message });
+            return res.status(400).json({ message: err.message });
+        }
+        console.error(err);
+        res.status(500).json({ message: 'Có lỗi xảy ra khi đánh dấu phòng chiếu không hoạt động' });
+    }
+};
