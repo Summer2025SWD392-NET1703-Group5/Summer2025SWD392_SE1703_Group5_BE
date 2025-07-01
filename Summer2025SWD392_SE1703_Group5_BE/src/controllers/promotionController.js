@@ -20,6 +20,7 @@ class PromotionController {
         this.applyPromotion = this.applyPromotion.bind(this);
         this.removePromotion = this.removePromotion.bind(this);
         this.getAvailablePromotions = this.getAvailablePromotions.bind(this);
+        this.getUserPromotions = this.getUserPromotions.bind(this);
     }
 
     /**
@@ -174,7 +175,7 @@ class PromotionController {
             }
 
             logger.info(`Controller: GET /api/promotions/validate/${code} - validatePromotionCode`);
-            console.log(`Validating promotion code: "${code}"`); // Thêm log để debug
+    
             const result = await this.promotionService.validatePromotionAsync(code.trim(), userId);
 
             res.status(200).json({
@@ -291,7 +292,41 @@ class PromotionController {
             next(error);
         }
     }
+
+    /**
+     * Lấy danh sách mã khuyến mãi đã sử dụng của người dùng
+     * @route GET /api/promotions/used
+     * @access Private (Authenticated users only)
+     */
+    async getUserPromotions(req, res, next) {
+        try {
+            console.log('Controller: Lấy danh sách khuyến mãi đã sử dụng của người dùng');
+            
+            // Lấy userId từ user đã xác thực qua middleware
+            const userId = req.user?.User_ID || req.user?.userId || req.user?.id;
+            
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Không thể xác định người dùng, vui lòng đăng nhập lại'
+                });
+            }
+            
+            // Gọi service để lấy danh sách khuyến mãi đã sử dụng
+            const usedPromotions = await this.promotionService.getUserPromotions(userId);
+            
+            res.status(200).json({
+                success: true,
+                data: usedPromotions,
+                message: 'Lấy danh sách khuyến mãi đã sử dụng thành công'
+            });
+        } catch (error) {
+            console.error('Controller: Lỗi khi lấy danh sách khuyến mãi đã sử dụng:', error);
+            next(error);
+        }
+    }
 }
 
 module.exports = new PromotionController();
 
+s
