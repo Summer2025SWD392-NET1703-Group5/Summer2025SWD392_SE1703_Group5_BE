@@ -24,6 +24,7 @@ const ticketRoutes = require('./routes/ticketRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const memberRoutes = require('./routes/memberRoutes');
 const bookingExpirationRoutes = require('./routes/bookingExpirationRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Import database connection
 const { getConnection, testConnection } = require('./config/database');
@@ -276,6 +277,8 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/members', memberRoutes);
 app.use('/api/booking-expiration', bookingExpirationRoutes);
+app.use('/api/notifications', notificationRoutes);
+
 // Route cơ bản để kiểm tra server
 // app.get('/', (req, res) => {
 //     res.status(200).json({
