@@ -103,6 +103,84 @@ class NotificationService {
     }
 
     /**
+     * Đánh dấu tất cả thông báo là đã đọc
+     * @param {number} userId - ID của người dùng
+     * @returns {Promise<number>} Số lượng thông báo đã được cập nhật
+     */
+    async markAllNotificationsAsReadAsync(userId) {
+        try {
+            const connection = await getConnection();
+
+            const query = `
+                UPDATE bh 
+                SET bh.IsRead = 1
+                FROM [ksf00691_team03].[Booking_History] bh
+                INNER JOIN [ksf00691_team03].[Ticket_Bookings] tb ON bh.Booking_ID = tb.Booking_ID
+                WHERE tb.User_ID = @userId 
+                    AND bh.IsRead = 0
+            `;
+
+            const request = connection.request();
+            request.input('userId', sql.Int, userId);
+
+            const result = await request.query(query);
+
+            return result.rowsAffected[0] || 0;
+
+        } catch (error) {
+            console.error(`[NotificationService] Error marking all notifications as read for user ${userId}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Đánh dấu một thông báo cụ thể là đã đọc
+     * @param {number} notificationId - ID của thông báo (Booking_History_ID)
+     * @param {number} userId - ID của người dùng
+     * @returns {Promise<boolean>} True nếu thành công
+     */
+    async markNotificationAsReadAsync(notificationId, userId) {
+        try {
+            const connection = await getConnection();
+
+            // Trước tiên, kiểm tra xem thông báo có tồn tại không
+            const checkQuery = `
+                SELECT bh.Booking_History_ID, bh.Booking_ID 
+                FROM [ksf00691_team03].[Booking_History] bh
+                WHERE bh.Booking_History_ID = @notificationId
+            `;
+
+            const checkRequest = connection.request();
+            checkRequest.input('notificationId', sql.Int, notificationId);
+
+            const checkResult = await checkRequest.query(checkQuery);
+
+            if (checkResult.recordset.length === 0) {
+                console.log(`[NotificationService] Không tìm thấy thông báo với ID ${notificationId}`);
+                return false;
+            }
+
+            // Cập nhật trạng thái đã đọc
+            const updateQuery = `
+                UPDATE [ksf00691_team03].[Booking_History]
+                SET IsRead = 1
+                WHERE Booking_History_ID = @notificationId
+            `;
+
+            const updateRequest = connection.request();
+            updateRequest.input('notificationId', sql.Int, notificationId);
+
+            const result = await updateRequest.query(updateQuery);
+
+            return (result.rowsAffected[0] || 0) > 0;
+
+        } catch (error) {
+            console.error(`[NotificationService] Lỗi khi đánh dấu thông báo ${notificationId} là đã đọc cho người dùng ${userId}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
      * Lấy số lượng thông báo chưa đọc
      * @param {number} userId - ID của người dùng
      * @returns {Promise<number>} Số lượng thông báo chưa đọc
