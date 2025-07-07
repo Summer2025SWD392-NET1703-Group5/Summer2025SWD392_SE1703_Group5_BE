@@ -143,7 +143,117 @@ class SalesReportController {
         }
     }
 
+/**
+     * Lấy báo cáo doanh thu theo phim
+     * @route GET /api/sales-report/movies
+     * @access Private (Admin/Staff only)
+     */
+    async getMovieRevenueReport(req, res) {
+        try {
+            const { startDate, endDate } = req.query;
 
+            // Validation
+            if (!startDate || !endDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Vui lòng cung cấp startDate và endDate'
+                });
+            }
+
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Định dạng ngày không hợp lệ. Sử dụng định dạng YYYY-MM-DD'
+                });
+            }
+
+            logger.info(`GET /api/sales-report/movies - Generating movie revenue report from ${startDate} to ${endDate}`);
+
+            const report = await salesReportService.getMovieRevenueReportAsync(start, end);
+
+            res.json({
+                success: true,
+                message: 'Lấy báo cáo doanh thu theo phim thành công',
+                data: {
+                    period: {
+                        start_date: start,
+                        end_date: end
+                    },
+                    movies: report,
+                    total_movies: report.length,
+                    total_revenue: report.reduce((sum, movie) => sum + movie.total_revenue, 0),
+                    generated_at: new Date()
+                }
+            });
+
+        } catch (error) {
+            logger.error('Error in getMovieRevenueReport:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Có lỗi xảy ra khi tạo báo cáo doanh thu theo phim',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Lấy báo cáo doanh thu theo rạp
+     * @route GET /api/sales-report/cinemas
+     * @access Private (Admin/Staff only)
+     */
+    async getCinemaRevenueReport(req, res) {
+        try {
+            const { startDate, endDate } = req.query;
+
+            // Validation
+            if (!startDate || !endDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Vui lòng cung cấp startDate và endDate'
+                });
+            }
+
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Định dạng ngày không hợp lệ. Sử dụng định dạng YYYY-MM-DD'
+                });
+            }
+
+            logger.info(`GET /api/sales-report/cinemas - Generating cinema revenue report from ${startDate} to ${endDate}`);
+
+            const report = await salesReportService.getCinemaRevenueReportAsync(start, end);
+
+            res.json({
+                success: true,
+                message: 'Lấy báo cáo doanh thu theo rạp thành công',
+                data: {
+                    period: {
+                        start_date: start,
+                        end_date: end
+                    },
+                    cinemas: report,
+                    total_cinemas: report.length,
+                    total_revenue: report.reduce((sum, cinema) => sum + cinema.total_revenue, 0),
+                    generated_at: new Date()
+                }
+            });
+
+        } catch (error) {
+            logger.error('Error in getCinemaRevenueReport:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Có lỗi xảy ra khi tạo báo cáo doanh thu theo rạp',
+                error: error.message
+            });
+        }
+    }
 
 }
 

@@ -246,6 +246,134 @@ class SalesReportService {
             throw error;
         }
     }
+    /**
+     * Lấy báo cáo doanh thu theo phim
+     * @param {Date} startDate - Ngày bắt đầu
+     * @param {Date} endDate - Ngày kết thúc
+     * @returns {Promise<Array>} Báo cáo theo phim
+     */
+    async getMovieRevenueReportAsync(startDate, endDate) {
+        let pool;
+        try {
+            logger.info(`Generating movie revenue report from ${startDate} to ${endDate}`);
+
+            pool = await getConnection();
+
+            const result = await pool.request()
+                .input('startDate', sql.DateTime, startDate)
+                .input('endDate', sql.DateTime, endDate)
+                .query(`
+                    SELECT 
+                        m.Movie_ID,
+                        m.Movie_Name,
+                        m.Genre,
+                        m.Duration,
+                        m.Release_Date,
+                        COUNT(DISTINCT tb.Booking_ID) as TotalBookings,
+                        SUM(CASE WHEN t.Ticket_ID IS NOT NULL THEN 1 ELSE 0 END) as TotalTickets,
+                        SUM(tb.Total_Amount) as TotalRevenue,
+                        AVG(tb.Total_Amount) as AverageBookingValue,
+                        COUNT(DISTINCT s.Showtime_ID) as TotalShowtimes,
+                        COUNT(DISTINCT cr.Cinema_ID) as CinemasShowing
+                    FROM ksf00691_team03.Movies m
+                    INNER JOIN ksf00691_team03.Showtimes s ON m.Movie_ID = s.Movie_ID
+                    INNER JOIN ksf00691_team03.Ticket_Bookings tb ON s.Showtime_ID = tb.Showtime_ID
+                    LEFT JOIN ksf00691_team03.Tickets t ON tb.Booking_ID = t.Booking_ID
+                    INNER JOIN ksf00691_team03.Cinema_Rooms cr ON s.Cinema_Room_ID = cr.Cinema_Room_ID
+                    WHERE CAST(tb.Booking_Date as DATE) >= CAST(@startDate as DATE)
+                        AND CAST(tb.Booking_Date as DATE) <= CAST(@endDate as DATE)
+                        AND tb.Status = 'Confirmed'
+                    GROUP BY m.Movie_ID, m.Movie_Name, m.Genre, m.Duration, m.Release_Date
+                    ORDER BY TotalRevenue DESC
+                `);
+
+            const movies = result.recordset.map(movie => ({
+                movie_id: movie.Movie_ID,
+                title: movie.Movie_Name,
+                genre: movie.Genre,
+                duration: movie.Duration,
+                release_date: movie.Release_Date,
+                total_bookings: movie.TotalBookings,
+                total_tickets: movie.TotalTickets,
+                total_revenue: movie.TotalRevenue,
+                average_booking_value: movie.AverageBookingValue,
+                total_showtimes: movie.TotalShowtimes,
+                cinemas_showing: movie.CinemasShowing,
+                revenue_per_showtime: movie.TotalShowtimes > 0 ? movie.TotalRevenue / movie.TotalShowtimes : 0
+            }));
+
+            logger.info(`Movie revenue report generated successfully. ${movies.length} movies found`);
+            return movies;
+
+        } catch (error) {
+            logger.error('Error generating movie revenue report:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Lấy báo cáo doanh thu theo rạp
+     * @param {Date} startDate - Ngày bắt đầu
+     * @param {Date} endDate - Ngày kết thúc
+     * @returns {Promise<Array>} Báo cáo theo rạp
+     */
+    async getCinemaRevenueReportAsync(startDate, endDate) {
+        let pool;
+        try {
+            logger.info(`Generating cinema revenue report from ${startDate} to ${endDate}`);
+
+            pool = await getConnection();
+
+            const result = await pool.request()
+                .input('startDate', sql.DateTime, startDate)
+                .input('endDate', sql.DateTime, endDate)
+                .query(`
+                    SELECT 
+                        c.Cinema_ID,
+                        c.Cinema_Name,
+                        c.Address,
+                        COUNT(DISTINCT tb.Booking_ID) as TotalBookings,
+                        SUM(CASE WHEN t.Ticket_ID IS NOT NULL THEN 1 ELSE 0 END) as TotalTickets,
+                        SUM(tb.Total_Amount) as TotalRevenue,
+                        AVG(tb.Total_Amount) as AverageBookingValue,
+                        COUNT(DISTINCT s.Showtime_ID) as TotalShowtimes,
+                        COUNT(DISTINCT cr.Cinema_Room_ID) as ActiveRooms,
+                        COUNT(DISTINCT m.Movie_ID) as MoviesShown
+                    FROM ksf00691_team03.Cinemas c
+                    INNER JOIN ksf00691_team03.Cinema_Rooms cr ON c.Cinema_ID = cr.Cinema_ID
+                    INNER JOIN ksf00691_team03.Showtimes s ON cr.Cinema_Room_ID = s.Cinema_Room_ID
+                    INNER JOIN ksf00691_team03.Ticket_Bookings tb ON s.Showtime_ID = tb.Showtime_ID
+                    LEFT JOIN ksf00691_team03.Tickets t ON tb.Booking_ID = t.Booking_ID
+                    INNER JOIN ksf00691_team03.Movies m ON s.Movie_ID = m.Movie_ID
+                    WHERE CAST(tb.Booking_Date as DATE) >= CAST(@startDate as DATE)
+                        AND CAST(tb.Booking_Date as DATE) <= CAST(@endDate as DATE)
+                        AND tb.Status = 'Confirmed'
+                    GROUP BY c.Cinema_ID, c.Cinema_Name, c.Address
+                    ORDER BY TotalRevenue DESC
+                `);
+
+            const cinemas = result.recordset.map(cinema => ({
+                cinema_id: cinema.Cinema_ID,
+                cinema_name: cinema.Cinema_Name,
+                location: cinema.Address,
+                total_bookings: cinema.TotalBookings,
+                total_tickets: cinema.TotalTickets,
+                total_revenue: cinema.TotalRevenue,
+                average_booking_value: cinema.AverageBookingValue,
+                total_showtimes: cinema.TotalShowtimes,
+                active_rooms: cinema.ActiveRooms,
+                movies_shown: cinema.MoviesShown,
+                revenue_per_room: cinema.ActiveRooms > 0 ? cinema.TotalRevenue / cinema.ActiveRooms : 0
+            }));
+
+            logger.info(`Cinema revenue report generated successfully. ${cinemas.length} cinemas found`);
+            return cinemas;
+
+        } catch (error) {
+            logger.error('Error generating cinema revenue report:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = new SalesReportService();
