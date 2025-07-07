@@ -25,9 +25,10 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const memberRoutes = require('./routes/memberRoutes');
 const bookingExpirationRoutes = require('./routes/bookingExpirationRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
-
+const referenceRoutes = require('./routes/referenceRoutes');
 // Import database connection
 const { getConnection, testConnection } = require('./config/database');
+const referenceService = require('./services/referenceService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -278,7 +279,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/members', memberRoutes);
 app.use('/api/booking-expiration', bookingExpirationRoutes);
 app.use('/api/notifications', notificationRoutes);
-
+app.use('/api/references', referenceRoutes);
 // Route cơ bản để kiểm tra server
 // app.get('/', (req, res) => {
 //     res.status(200).json({
