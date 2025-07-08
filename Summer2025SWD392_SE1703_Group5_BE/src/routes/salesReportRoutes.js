@@ -168,5 +168,78 @@ router.get('/export', salesReportController.exportSalesReport);
  *         description: Access denied
  */
 router.get('/export-excel', salesReportController.exportReportToExcel);
+/**
+ * @swagger
+ * /api/sales-report/movies:
+ *   get:
+ *     summary: Lấy báo cáo doanh thu theo phim (Chỉ Admin/Staff/Manager)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin, Staff hoặc Manager xem báo cáo doanh thu chi tiết theo từng phim.
+ *       Kết quả bao gồm thông tin về doanh thu, số lượng vé bán ra, tỉ lệ lấp đầy và các chỉ số khác cho mỗi phim
+ *       trong khoảng thời gian được chỉ định. Báo cáo này giúp đánh giá hiệu quả doanh thu của từng phim.
+ *     tags: [Sales Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date (YYYY-MM-DD)
+ *     responses:
+ *       200:
+ *         description: Movie revenue report generated successfully
+ *       400:
+ *         description: Missing required parameters
+ *       403:
+ *         description: Access denied
+ */
+router.get('/movies', salesReportController.getMovieRevenueReport);
+
+/**
+ * @swagger
+ * /api/sales-report/cinemas:
+ *   get:
+ *     summary: Lấy báo cáo doanh thu theo rạp phim (Chỉ Admin/Staff/Manager)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin, Staff hoặc Manager xem báo cáo doanh thu chi tiết theo từng rạp phim.
+ *       Kết quả bao gồm thông tin về doanh thu, số lượng vé bán ra, tỉ lệ lấp đầy và các chỉ số khác cho mỗi rạp phim
+ *       trong khoảng thời gian được chỉ định. Báo cáo này giúp so sánh hiệu quả kinh doanh giữa các rạp phim.
+ *     tags: [Sales Reports]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date (YYYY-MM-DD)
+ *     responses:
+ *       200:
+ *         description: Cinema revenue report generated successfully
+ *       400:
+ *         description: Missing required parameters
+ *       403:
+ *         description: Access denied
+ */
+router.get('/cinemas', salesReportController.getCinemaRevenueReport);
 
 module.exports = router;
