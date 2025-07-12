@@ -1,4 +1,3 @@
-// Log ngay khi module này được nạp để biết nó có được thực thi không
 console.log('[appConfig.js] Module loaded. Reading environment variables...');
 
 const emailConfig = {
@@ -12,16 +11,6 @@ const emailConfig = {
     apiBaseUrl: process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 3000}`,
     supportPhone: process.env.SUPPORT_PHONE || '1900 xxxx'
 };
-
-// DEBUG LOGGING: Log giá trị các biến môi trường và emailConfig
-console.log('[appConfig.js] Raw EMAIL_HOST from env:', process.env.EMAIL_HOST);
-console.log('[appConfig.js] Raw EMAIL_PORT from env:', process.env.EMAIL_PORT);
-console.log('[appConfig.js] Raw EMAIL_USER from env:', process.env.EMAIL_USER);
-console.log('[appConfig.js] Raw EMAIL_PASSWORD from env (should be defined):', process.env.EMAIL_PASSWORD ? 'Defined' : 'NOT DEFINED');
-console.log('[appConfig.js] Raw EMAIL_FROM from env:', process.env.EMAIL_FROM);
-console.log('[appConfig.js] Raw EMAIL_FROM_NAME from env:', process.env.EMAIL_FROM_NAME);
-console.log('[appConfig.js] Parsed emailConfig object:', JSON.stringify(emailConfig, null, 2));
-// KẾT THÚC DEBUG LOGGING
 
 const logger = console; // Hoặc một instance logger phức tạp hơn (ví dụ: Winston)
 
@@ -59,7 +48,6 @@ const tokenExpiryConfig = {
 const constants = {
     SUPPORT_EMAIL: process.env.SUPPORT_EMAIL || 'support@stpcinema.com',
     SUPPORT_PHONE: process.env.SUPPORT_PHONE || '1900-xxxx',
-    // Thêm các hằng số khác ở đây
 };
 
 module.exports = {
@@ -70,5 +58,4 @@ module.exports = {
     tokenExpiryConfig,
     constants,
     logger,
-    // Thêm các config khác của ứng dụng vào đây nếu cần
 }; 

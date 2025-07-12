@@ -21,18 +21,12 @@ module.exports = (sequelize, DataTypes) => {
     Transaction_Date: DataTypes.DATE,
     Payment_Status: DataTypes.STRING,
     Processor_Response: DataTypes.STRING,
-    Refund_Amount: {
-      type: DataTypes.DECIMAL,
-      defaultValue: 0,
-    },
-    Refund_Date: DataTypes.DATE,
-    Refund_Reason: DataTypes.STRING,
     Processed_By: DataTypes.INTEGER,
   }, {
     sequelize,
     modelName: 'Payment',
     tableName: 'Payments',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return Payment;

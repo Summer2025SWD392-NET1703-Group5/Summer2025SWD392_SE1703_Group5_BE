@@ -149,9 +149,9 @@ class SeatLayoutService {
                 throw new Error(`Số lượng ghế phải từ 20 đến 150 (hiện tại: ${totalSeats})`);
             }
 
-            // THÊM MỚI: Kiểm tra có booking pending không
+            // ✅ SECURITY FIX: Kiểm tra có booking hoạt động không
             if (await this.hasPendingBookingsForRoomAsync(roomId)) {
-                throw new Error('Không thể cập nhật layout ghế vì có đơn đặt vé đang chờ thanh toán. Vui lòng đợi các đơn này được hoàn tất hoặc hủy trước.');
+                throw new Error('Không thể cập nhật layout ghế vì có đơn đặt vé đang hoạt động (chờ thanh toán, đang xử lý hoặc đã xác nhận). Vui lòng đợi các đơn này được hoàn tất hoặc hủy trước.');
             }
 
             // Kiểm tra xem phòng có showtime không
@@ -222,8 +222,8 @@ class SeatLayoutService {
     }
 
     /**
-     * Kiểm tra có booking pending không
-     * Chuyển đổi từ C# HasPendingBookingsForRoomAsync
+     * Kiểm tra có booking hoạt động không
+     * ✅ SECURITY FIX: Đổi tên và mở rộng để kiểm tra cả Pending, Processing và Confirmed bookings
      */
     async hasPendingBookingsForRoomAsync(roomId) {
         const connection = await getConnection();
@@ -233,8 +233,8 @@ class SeatLayoutService {
                 SELECT COUNT(*) as count
                 FROM bookings b
                 INNER JOIN showtimes s ON b.Showtime_ID = s.Showtime_ID
-                WHERE s.Cinema_Room_ID = ? 
-                AND b.Status IN ('Pending', 'Processing')
+                WHERE s.Cinema_Room_ID = ?
+                AND b.Status IN ('Pending', 'Processing', 'Confirmed')
             `, [roomId]);
 
             return rows[0].count > 0;

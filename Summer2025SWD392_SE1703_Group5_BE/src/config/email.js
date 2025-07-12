@@ -7,6 +7,14 @@ require('dotenv').config(); // Nạp các biến môi trường từ file .env.
 let transporterInstance = null; // Biến để lưu trữ instance của transporter (Singleton pattern).
 
 /**
+ * Reset transporter instance để force tạo mới với cấu hình mới
+ */
+function resetTransporter() {
+    console.log('[email.js] Resetting transporter instance...');
+    transporterInstance = null;
+}
+
+/**
  * Hàm để lấy (hoặc tạo nếu chưa có) instance của Nodemailer transporter.
  * Sử dụng Singleton pattern để đảm bảo chỉ có một instance transporter được tạo ra.
  * @returns {nodemailer.Transporter} Instance của Nodemailer transporter.
@@ -49,4 +57,7 @@ function getTransporterInstance() {
 
 // Export hàm getTransporterInstance để các module khác có thể lấy transporter.
 // Sử dụng object với key `get` để có thể gọi `require('./email').get()`
-module.exports = { get: getTransporterInstance };
+module.exports = { 
+    get: getTransporterInstance,
+    reset: resetTransporter
+};

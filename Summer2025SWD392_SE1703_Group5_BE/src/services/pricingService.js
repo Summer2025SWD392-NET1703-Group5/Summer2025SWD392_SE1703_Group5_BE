@@ -209,8 +209,44 @@ class PricingService {
      * @returns {string} - Loại khung giờ (morning, afternoon, evening)
      */
     getTimeSlot(time) {
+        // Chuẩn hóa định dạng time để đảm bảo so sánh chính xác
+        let normalizedTime = time;
+        
+        // Kiểm tra nếu time là đối tượng Date
+        if (time instanceof Date) {
+            // ✅ FIX TIMEZONE: Sử dụng UTC methods để tránh timezone offset
+            const hours = time.getUTCHours().toString().padStart(2, '0');
+            const minutes = time.getUTCMinutes().toString().padStart(2, '0');
+            const seconds = time.getUTCSeconds().toString().padStart(2, '0');
+            normalizedTime = `${hours}:${minutes}:${seconds}`;
+        }
+        // Kiểm tra nếu time là đối tượng SQL Server time hoặc time object
+        else if (typeof time === 'object' && time !== null) {
+            if (time.hours !== undefined) {
+                const hours = String(time.hours).padStart(2, '0');
+                const minutes = String(time.minutes || 0).padStart(2, '0');
+                const seconds = String(time.seconds || 0).padStart(2, '0');
+                normalizedTime = `${hours}:${minutes}:${seconds}`;
+                logger.info(`Đã chuyển đổi time object thành chuỗi: ${normalizedTime}`);
+            } else {
+                logger.warn(`Invalid time object format: ${JSON.stringify(time)}, using default afternoon slot`);
+                return 'afternoon';
+            }
+        }
+        
+        // Đảm bảo có định dạng HH:MM:SS
+        if (typeof normalizedTime === 'string' && normalizedTime.includes(':')) {
+            // Nếu chỉ có HH:MM, thêm :00 vào cuối
+            if (normalizedTime.split(':').length === 2) {
+                normalizedTime = `${normalizedTime}:00`;
+            }
+        } else {
+            logger.warn(`Invalid time format: ${time}, using default afternoon slot`);
+            return 'afternoon';
+        }
+        
         for (const [slotName, slot] of Object.entries(this.pricingConfig.timeSlots)) {
-            if (time >= slot.startTime && time < slot.endTime) {
+            if (normalizedTime >= slot.startTime && normalizedTime < slot.endTime) {
                 return slotName;
             }
         }

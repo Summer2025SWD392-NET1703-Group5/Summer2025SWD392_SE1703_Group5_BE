@@ -325,7 +325,33 @@ const cinemaRoomService = {
         
         console.log(`[updateCinemaRoom] Tìm thấy phòng: ${room.Room_Name}, Status hiện tại: ${room.Status}`);
 
-        // ✅ ENHANCED: Kiểm tra active bookings nếu đang thay đổi Status thành Inactive
+        // ✅ SECURITY FIX: Kiểm tra active bookings cho tất cả thay đổi quan trọng
+        const criticalFields = ['Room_Name', 'Capacity', 'Room_Type', 'Cinema_ID', 'Status'];
+        const hasCriticalChanges = criticalFields.some(field => {
+            const dataField = field === 'Room_Name' ? data.RoomName : data[field];
+            return dataField !== undefined && dataField !== room[field];
+        });
+
+        if (hasCriticalChanges) {
+            console.log(`[updateCinemaRoom] Phát hiện thay đổi thông tin quan trọng cho phòng ID ${id}, kiểm tra active bookings...`);
+
+            const bookingStatus = await hasActiveBookingsInRoom(id);
+
+            if (bookingStatus.hasBookings) {
+                const errorMsg = `Không thể cập nhật thông tin phòng chiếu quan trọng vì có ${bookingStatus.totalCount} booking/vé đang hoạt động ` +
+                               `(${bookingStatus.bookingsCount} bookings, ${bookingStatus.ticketsCount} tickets) ` +
+                               `trong ${bookingStatus.showtimesCount} suất chiếu sắp tới. ` +
+                               `Việc này sẽ ảnh hưởng đến khách hàng đã đặt vé. ` +
+                               `Vui lòng chờ khách hàng hoàn thành hoặc hủy booking trước khi cập nhật.`;
+
+                console.log(`[updateCinemaRoom] KHÔNG THỂ CẬP NHẬT: ${errorMsg}`);
+                throw new Error(errorMsg);
+            }
+
+            console.log(`[updateCinemaRoom] An toàn để cập nhật - không có active bookings`);
+        }
+
+        // ✅ ENHANCED: Kiểm tra active bookings nếu đang thay đổi Status thành Inactive (giữ lại logic cũ để tương thích)
         if (data.Status && data.Status === 'Inactive' && room.Status !== 'Inactive') {
             console.log(`[updateCinemaRoom] Đang thay đổi Status từ '${room.Status}' thành 'Inactive' - kiểm tra bookings`);
             

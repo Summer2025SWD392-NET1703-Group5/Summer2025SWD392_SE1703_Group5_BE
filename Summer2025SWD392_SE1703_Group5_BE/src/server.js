@@ -1,8 +1,11 @@
 // File: src/server.js
 // Mô tả: File chính khởi tạo và cấu hình server Express cho ứng dụng GALAXY Cinema.
-console.log('Current Working Directory (from server.js):', process.cwd()); // Log CWD
+process.env.TZ = 'Asia/Ho_Chi_Minh';
+console.log('Đang thực thi file server.js, Thư mục làm việc hiện tại:', process.cwd());
 
-require('dotenv').config(); // Nạp các biến môi trường từ file .env ngay từ đầu ứng dụng.
+// Nạp các biến môi trường từ file .env ngay từ đầu ứng dụng.
+require('dotenv').config();
+console.log('✅ Biến môi trường đã được nạp.');
 
 const fs = require('fs');
 const path = require('path');
@@ -13,30 +16,62 @@ const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swaggerConfig');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 
 // Import các modules routes của ứng dụng
+console.log('🔄 Đang nạp các modules routes...');
 const authRoutes = require('./routes/authRoutes');
-const showtimeRoutes = require('./routes/showtimeRoutes');
-const cinemaRoomRoutes = require('./routes/cinemaRoomRoutes');
-const cinemaRoutes = require('./routes/cinemaRoutes');
-const seatLayoutRoutes = require('./routes/seatLayoutRoutes');
-const ticketRoutes = require('./routes/ticketRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
-const memberRoutes = require('./routes/memberRoutes');
+const cinemaRoomRoutes = require('./routes/cinemaRoomRoutes');
+const movieRoutes = require('./routes/movieRoutes');
 const bookingExpirationRoutes = require('./routes/bookingExpirationRoutes');
+const bookingStatisticsRoutes = require('./routes/bookingStatisticsRoutes');
+const memberRoutes = require('./routes/memberRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
-const referenceRoutes = require('./routes/referenceRoutes');
-// Import database connection
+const payosRoutes = require('./routes/payosRoutes');
+const pointsRoutes = require('./routes/pointsRoutes');
+const promotionRoutes = require('./routes/promotionRoutes');
+const salesReportRoutes = require('./routes/salesReportRoutes');
+const scoreHistoryRoutes = require('./routes/scoreHistoryRoutes');
+const seatRoutes = require('./routes/seatRoutes');
+const showtimeExpirationRoutes = require('./routes/showtimeExpirationRoutes');
+const seatLayoutRoutes = require('./routes/seatLayoutRoutes');
+const showtimeRoutes = require('./routes/showtimeRoutes');
+const staffPerformanceRoutes = require('./routes/staffPerformanceRoutes');
+const ticketRoutes = require('./routes/ticketRoutes');
+const ticketPricingRoutes = require('./routes/ticketPricingRoutes');
+const ticketCancellationRoutes = require('./routes/ticketCancellationRoutes'); // ✅ Thêm import ticket cancellation routes
+const promotionExpirationRoutes = require('./routes/promotionExpirationRoutes'); // ✅ Thêm import promotion expiration routes
+const userRoutes = require('./routes/userRoutes');
+const cinemaRoutes = require('./routes/cinemaRoutes');
+const referenceRoutes = require('./routes/referenceRoutes'); // Thêm import referenceRoutes
+const movieStatusRoutes = require('./routes/movieStatusRoutes'); // Thêm import movieStatusRoutes
+const exportImportRoutes = require('./routes/exportImportRoutes'); // Thêm import exportImportRoutes
+const seatSelectionRoutes = require('./routes/seatSelectionRoutes'); // Thêm import seatSelectionRoutes
+console.log('✅ Tất cả routes đã được nạp.');
+
+// Import các services chạy nền
+console.log('🔄 Đang nạp các services chạy nền...');
+const bookingExpirationService = require('./services/bookingExpirationService');
+const showtimeExpirationService = require('./services/showtimeExpirationService');
+const movieStatusService = require('./services/movieStatusService');
+const ticketCancellationService = require('./services/ticketCancellationService'); // ✅ Thêm ticket cancellation service
+const promotionExpirationService = require('./services/promotionExpirationService'); // ✅ Thêm promotion expiration service
+console.log('✅ Services chạy nền đã được nạp.');
+
+// Import kết nối cơ sở dữ liệu
 const { getConnection, testConnection } = require('./config/database');
-const referenceService = require('./services/referenceService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+console.log(`🔧 Môi trường hoạt động: ${NODE_ENV}`);
 
 // === Cấu hình Security & Performance Middleware ===
+console.log('🔄 Đang cấu hình các middleware...');
 
-// Security headers
+// Helmet: Bảo vệ ứng dụng khỏi các lỗ hổng web phổ biến bằng cách đặt các HTTP header phù hợp.
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -48,156 +83,105 @@ app.use(helmet({
     },
     crossOriginEmbedderPolicy: false
 }));
+console.log('✅ Middleware Helmet đã được kích hoạt.');
 
-// CORS configuration
-const corsOptions = {
-    origin: function (origin, callback) {
-        // Cho phép requests không có origin (mobile apps, postman, etc.)
-        // và requests có origin là null (ví dụ: file:// URLs, sandboxed iframes)
-        if (!origin || origin === 'null') {
-            return callback(null, true);
-        }
-
-        const allowedOrigins = [
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'http://localhost:5173', // Vite dev server
-            'http://127.0.0.1:5173',
-            ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
-        ];
-
-        if (allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS blocked origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+// CORS: Cho phép các request từ các domain khác (cross-origin).
+app.use(cors({
+    origin: '*', // Chú ý: Trong môi trường production, nên giới hạn lại chỉ các domain được phép.
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-};
+}));
+console.log('✅ Middleware CORS đã được kích hoạt.');
 
-app.use(cors(corsOptions));
-
-// Compression middleware
+// Compression: Nén các phản hồi HTTP để giảm kích thước và tăng tốc độ tải.
 app.use(compression());
+console.log('✅ Middleware Compression đã được kích hoạt.');
 
-// Rate limiting
-const createRateLimiter = (windowMs, max, message) => {
-    return rateLimit({
-        windowMs,
-        max,
-        message: {
-            success: false,
-            message,
-            retryAfter: Math.ceil(windowMs / 1000)
-        },
-        standardHeaders: true,
-        legacyHeaders: false,
-        skipSuccessfulRequests: false,
-        skipFailedRequests: false,
-        keyGenerator: (req) => {
-            return req.ip;
-        }
-    });
+// Tạo cache cho kết nối database để tăng tốc độ và tái sử dụng kết nối.
+let dbConnectionCache = null;
+const getDbConnection = async () => {
+    if (!dbConnectionCache) {
+        console.log('⚠️ Đang tạo kết nối database mới cho cache...');
+        dbConnectionCache = await getConnection();
+    }
+    return dbConnectionCache;
 };
 
-// General API rate limiting
-const generalLimiter = createRateLimiter(
-    15 * 60 * 1000, // 15 minutes
-    100, // 100 requests per window
-    'Quá nhiều requests từ IP này. Vui lòng thử lại sau 15 phút.'
-);
+app.set('dbConnectionCache', getDbConnection);
+console.log('✅ Cache cho kết nối database đã được thiết lập.');
 
-// Apply rate limiting
-app.use('/api/', generalLimiter);
-
-// Body parsing middleware
+// Body Parsing: Middleware để xử lý (parse) body của request (JSON, URL-encoded).
 app.use(express.json({
     limit: '10mb',
     verify: (req, res, buf) => {
         try {
             JSON.parse(buf);
         } catch (e) {
-            res.status(400).json({
-                success: false,
-                message: 'Invalid JSON format'
-            });
+            console.error('Lỗi JSON không hợp lệ:', e.message);
+            res.status(400).json({ success: false, message: 'Dữ liệu JSON không hợp lệ' });
             throw new Error('Invalid JSON');
         }
     }
 }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+console.log('✅ Middleware xử lý body (JSON, URL-encoded) đã được kích hoạt.');
 
-app.use(express.urlencoded({
-    extended: true,
-    limit: '10mb'
-}));
-
-// Request logging middleware (chỉ trong development)
-if (NODE_ENV === 'development') {
-    app.use((req, res, next) => {
-        const start = Date.now();
-
-        res.on('finish', () => {
-            const duration = Date.now() - start;
-            const statusColor = res.statusCode >= 400 ? '\x1b[31m' : '\x1b[32m'; // Red for errors, green for success
-            console.log(
-                `${statusColor}${req.method}\x1b[0m ${req.originalUrl} - ${statusColor}${res.statusCode}\x1b[0m (${duration}ms)`
-            );
-        });
-
-        next();
+// Disable caching toàn cục cho tất cả API responses
+app.use((req, res, next) => {
+    res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
     });
-}
+    next();
+});
+// Request Logging: DISABLED để tăng tốc API
+// if (NODE_ENV === 'development') {
+//     app.use((req, res, next) => {
+//         const start = Date.now();
+//         res.on('finish', () => {
+//             const duration = Date.now() - start;
+//             const statusColor = res.statusCode >= 400 ? '\x1b[31m' : '\x1b[32m';
+//             console.log(`[DEV LOG] ${statusColor}${req.method}\x1b[0m ${req.originalUrl} - ${statusColor}${res.statusCode}\x1b[0m (${duration}ms)`);
+//         });
+//         next();
+//     });
+//     console.log('✅ Middleware ghi log request (development) đã được kích hoạt.');
+// }
 
 // === Kết nối Cơ sở dữ liệu ===
 const initializeDatabase = async () => {
     try {
-        await getConnection();
-        console.log('✅ Database connection established');
-
-        // Test connection
+        console.log('🔄 Đang khởi tạo kết nối cơ sở dữ liệu...');
+        dbConnectionCache = await getConnection();
+        console.log('✅ Kết nối database đã được thiết lập và cache lại.');
         const isConnected = await testConnection();
         if (!isConnected) {
-            throw new Error('Database connection test failed');
+            throw new Error('Kiểm tra kết nối database thất bại.');
         }
-        console.log('✅ Database connection test passed');
-
+        console.log('✅ Kiểm tra kết nối database thành công.');
     } catch (error) {
-        console.error('❌ Database initialization failed:', error);
+        console.error('❌ Lỗi nghiêm trọng khi khởi tạo database:', error);
+        // Trong môi trường production, thoát ứng dụng nếu không kết nối được DB.
         if (NODE_ENV === 'production') {
             process.exit(1);
         }
     }
 };
 
-// Initialize database
 initializeDatabase();
 
 // === Cấu hình Swagger UI ===
 const swaggerOptions = {
     explorer: true,
-    swaggerOptions: {
-        persistAuthorization: true,
-        displayRequestDuration: true,
-        docExpansion: 'none',
-        filter: true,
-        showExtensions: true,
-        showCommonExtensions: true,
-        tryItOutEnabled: true
-    },
-    customCss: `
-        .swagger-ui .topbar { display: none }
-        .swagger-ui .info .title { color: #1f2937; }
-    `,
-    customSiteTitle: "GALAXY Cinema API Documentation"
+    customCss: `.swagger-ui .topbar { display: none } .swagger-ui .info .title { color: #1f2937; }`,
+    customSiteTitle: "Tài liệu API - GALAXY Cinema"
 };
-
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
-console.info(`📚 Swagger UI available at: http://localhost:${PORT}/api-docs`);
+console.log(`📚 Tài liệu API Swagger UI có sẵn tại: http://localhost:${PORT}/api-docs`);
 
-// === Health Check Routes ===
+// === Các Route kiểm tra sức khỏe hệ thống (Health Check) ===
 app.get('/health', async (req, res) => {
     try {
         const dbStatus = await testConnection();
@@ -214,8 +198,11 @@ app.get('/health', async (req, res) => {
             },
             services: {
                 database: dbStatus ? 'Connected' : 'Disconnected',
-                // bookingExpiration: bookingExpirationService.isRunning ? 'Running' : 'Stopped',
-                // showtimeExpiration: showtimeExpirationService.isRunning ? 'Running' : 'Stopped' // ✅ Thêm showtime expiration status
+                bookingExpiration: bookingExpirationService.isRunning ? 'Running' : 'Stopped',
+                showtimeExpiration: showtimeExpirationService.isRunning ? 'Running' : 'Stopped',
+                movieStatus: movieStatusService.isRunning ? 'Running' : 'Stopped',
+                ticketCancellation: ticketCancellationService.isRunning ? 'Running' : 'Stopped', // ✅ Thêm ticket cancellation status
+                promotionExpiration: promotionExpirationService.isRunning ? 'Running' : 'Stopped' // ✅ Thêm promotion expiration status
             },
             system: {
                 nodeVersion: process.version,
@@ -244,8 +231,11 @@ app.get('/health/detailed', async (req, res) => {
     try {
         const checks = {
             database: await testConnection(),
-            // bookingService: bookingExpirationService.isRunning,
-            showtimeService: showtimeExpirationService.isRunning, // ✅ Thêm showtime service check
+            bookingService: bookingExpirationService.isRunning,
+            showtimeService: showtimeExpirationService.isRunning,
+            movieStatusService: movieStatusService.isRunning,
+            ticketCancellationService: ticketCancellationService.isRunning, // ✅ Thêm ticket cancellation service check
+            promotionExpirationService: promotionExpirationService.isRunning, // ✅ Thêm promotion expiration service check
             memory: process.memoryUsage().heapUsed < 500 * 1024 * 1024, // Less than 500MB
             uptime: process.uptime() > 0
         };
@@ -268,47 +258,73 @@ app.get('/health/detailed', async (req, res) => {
     }
 });
 
-// === Đăng ký Routes cho API ===
+// === Đăng ký Routes cho các API ===
+console.log('🔄 Đang đăng ký các routes cho ứng dụng...');
 app.use('/api/auth', authRoutes);
-app.use('/api/showtimes', showtimeRoutes);
-app.use('/api/cinema-rooms', cinemaRoomRoutes);
-app.use('/api/cinemas', cinemaRoutes);
-app.use('/api/seat-layouts', seatLayoutRoutes);
-app.use('/api/tickets', ticketRoutes);
 app.use('/api/bookings', bookingRoutes);
-app.use('/api/members', memberRoutes);
+app.use('/api/cinema-rooms', cinemaRoomRoutes);
+app.use('/api/movies', movieRoutes);
 app.use('/api/booking-expiration', bookingExpirationRoutes);
+app.use('/api/booking-statistics', bookingStatisticsRoutes);
+app.use('/api/member', memberRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/payos', payosRoutes);
+app.use('/api/points', pointsRoutes);
+app.use('/api/promotions', promotionRoutes);
+app.use('/api/sales-report', salesReportRoutes);
+app.use('/api/score-history', scoreHistoryRoutes);
+app.use('/api/seats', seatRoutes);
+app.use('/api/showtime-expiration', showtimeExpirationRoutes);
+app.use('/api/seat-layouts', seatLayoutRoutes);
+app.use('/api/showtimes', showtimeRoutes);
+app.use('/api/staff-performance', staffPerformanceRoutes);
+app.use('/api/ticket-pricing', ticketPricingRoutes);
+app.use('/api/ticket', ticketRoutes);
+app.use('/api/ticket-cancellation', ticketCancellationRoutes); // ✅ Thêm route cho ticket cancellation
+app.use('/api/promotion-expiration', promotionExpirationRoutes); // ✅ Thêm route cho promotion expiration
+app.use('/api/user', userRoutes);
+app.use('/api/cinemas', cinemaRoutes);
 app.use('/api/references', referenceRoutes);
+app.use('/api/movie-status', movieStatusRoutes); // Thêm route cho movie status
+app.use('/api/export-import', exportImportRoutes); // Thêm route cho export/import
+app.use('/api/seat-selection', seatSelectionRoutes); // Thêm route cho real-time seat selection
+console.log('✅ Tất cả các routes đã được đăng ký thành công.');
+
 // Route cơ bản để kiểm tra server
-// app.get('/', (req, res) => {
-//     res.status(200).json({
-//         success: true,
-//         message: 'Chào mừng bạn đến với API Server cho GALAXY Cinema! 🎬',
-//         status: 'Server đang chạy',
-//         version: '1.0.0',
-//         environment: NODE_ENV,
-//         services: {
-//             bookingExpiration: bookingExpirationService.isRunning ? 'Running' : 'Stopped',
-//             showtimeExpiration: showtimeExpirationService.isRunning ? 'Running' : 'Stopped' // ✅ Thêm showtime service status
-//         },
-//         endpoints: {
-//             documentation: `http://localhost:${PORT}/api-docs`,
-//             health: `http://localhost:${PORT}/health`,
-//             detailedHealth: `http://localhost:${PORT}/health/detailed`
-//         },
-//         apiRoutes: {
-//             auth: '/api/auth',
-//             bookings: '/api/bookings',
-//             cinemaRooms: '/api/cinema-rooms',
-//             movies: '/api/movies',
-//             members: '/api/members',
-//             statistics: '/api/booking-statistics',
-//             expiration: '/api/booking-expiration',
-//             seats: '/api/seats'
-//         }
-//     });
-// });
+app.get('/', (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: 'Chào mừng bạn đến với API Server cho GALAXY Cinema! 🎬',
+        status: 'Server đang chạy',
+        version: '1.0.0',
+        environment: NODE_ENV,
+        services: {
+            bookingExpiration: bookingExpirationService.isRunning ? 'Running' : 'Stopped',
+            showtimeExpiration: showtimeExpirationService.isRunning ? 'Running' : 'Stopped',
+            movieStatus: movieStatusService.isRunning ? 'Running' : 'Stopped',
+            ticketCancellation: ticketCancellationService.isRunning ? 'Running' : 'Stopped', // ✅ Thêm ticket cancellation service
+            promotionExpiration: promotionExpirationService.isRunning ? 'Running' : 'Stopped' // ✅ Thêm promotion expiration service
+        },
+        endpoints: {
+            documentation: `http://localhost:${PORT}/api-docs`,
+            health: `http://localhost:${PORT}/health`,
+            detailedHealth: `http://localhost:${PORT}/health/detailed`
+        },
+        apiRoutes: {
+            auth: '/api/auth',
+            bookings: '/api/bookings',
+            cinemaRooms: '/api/cinema-rooms',
+            movies: '/api/movies',
+            members: '/api/members',
+            statistics: '/api/booking-statistics',
+            expiration: '/api/booking-expiration',
+            seats: '/api/seats',
+            user: '/api/user',
+            movieStatus: '/api/movie-status', // Thêm movie status route
+            exportImport: '/api/export-import' // Thêm export/import route
+        }
+    });
+});
 
 // API version endpoint
 app.get('/api', (req, res) => {
@@ -325,200 +341,180 @@ app.get('/api', (req, res) => {
             'GET /api/cinema-rooms - Cinema room management',
             'GET /api/booking-statistics - Booking statistics',
             'GET /api/booking-expiration - Booking expiration management',
-            'GET /api/seats - Seat management'
+            'GET /api/seats - Seat management',
+            'GET /api/user - User management',
+            'GET /api/movie-status - Movie status management', // Thêm movie status endpoint
+            'GET /api/export-import - Export/Import management' // Thêm export/import endpoint
         ]
     });
 });
 
-// === Background Services ===
-const startServices = async () => { // ✅ Thay đổi thành async function
+// === Các Tiến trình chạy nền (Background Services) ===
+const startServices = async () => {
     try {
-        console.log('🔄 Starting background services...');
-
-        //         // Khởi động booking expiration service
-        //         bookingExpirationService.start();
-        //         console.log(`   ✅ Booking Expiration Service: ${bookingExpirationService.isRunning ? 'Running' : 'Failed'}`);
-
-        //         // ✅ Khởi động showtime expiration service
-        //         await showtimeExpirationService.start();
-        //         console.log(`   ✅ Showtime Expiration Service: ${showtimeExpirationService.isRunning ? 'Running' : 'Failed'}`);
-
-        //         console.log('✅ All background services started successfully');
-
+        console.log('🔄 Đang khởi động các tiến trình chạy nền...');
+        await bookingExpirationService.start(); // ✅ Sửa thành await vì start() bây giờ là async
+        console.log(`   ✅ Service kiểm tra hạn đặt vé: ${bookingExpirationService.isRunning ? 'Đang chạy' : 'Thất bại'}`);
+        await showtimeExpirationService.start();
+        console.log(`   ✅ Service kiểm tra hạn suất chiếu: ${showtimeExpirationService.isRunning ? 'Đang chạy' : 'Thất bại'}`);
+        await movieStatusService.start();
+        console.log(`   ✅ Service cập nhật trạng thái phim: ${movieStatusService.isRunning ? 'Đang chạy' : 'Thất bại'}`);
+        await ticketCancellationService.start(); // ✅ Khởi động ticket cancellation service
+        console.log(`   ✅ Service hủy vé quá hạn: ${ticketCancellationService.isRunning ? 'Đang chạy' : 'Thất bại'}`);
+        await promotionExpirationService.start(); // ✅ Khởi động promotion expiration service
+        console.log(`   ✅ Service ẩn promotion hết hạn: ${promotionExpirationService.isRunning ? 'Đang chạy' : 'Thất bại'}`);
+        console.log('✅ Tất cả các tiến trình chạy nền đã được khởi động.');
     } catch (error) {
-        console.error('❌ Error starting background services:', error);
+        console.error('❌ Lỗi khi khởi động các tiến trình chạy nền:', error);
     }
 };
 
-// === Error Handling Middleware ===
-
-// Validation error handler (đã được handle trong validation middleware)
-// Global error handler
+// === Middleware xử lý lỗi tập trung (Global Error Handler) ===
 app.use((err, req, res, next) => {
-    // Log error details
-    console.error('=== Global Error Handler ===');
-    console.error('Time:', new Date().toISOString());
+    console.error('=== LỖI TOÀN HỆ THỐNG ===');
+    console.error('Thời gian:', new Date().toISOString());
     console.error('URL:', req.originalUrl);
-    console.error('Method:', req.method);
+    console.error('Phương thức:', req.method);
     console.error('IP:', req.ip);
-    console.error('Error:', err);
-    console.error('============================');
-
-    // Default error response
-    let statusCode = err.statusCode || err.status || 500;
-    let message = err.message || 'Có lỗi xảy ra trên server. Vui lòng thử lại sau.';
-
-    // Handle specific error types
-    if (err.name === 'ValidationError') {
-        statusCode = 400;
-        message = 'Dữ liệu không hợp lệ';
-    } else if (err.name === 'UnauthorizedError') {
-        statusCode = 401;
-        message = 'Token không hợp lệ hoặc đã hết hạn';
-    } else if (err.code === 'LIMIT_FILE_SIZE') {
-        statusCode = 413;
-        message = 'File quá lớn. Kích thước tối đa là 10MB';
-    } else if (err.type === 'entity.parse.failed') {
-        statusCode = 400;
-        message = 'Dữ liệu JSON không hợp lệ';
+    console.error('Lỗi:', err.message);
+    if (NODE_ENV === 'development') {
+        console.error('Stack Trace:', err.stack);
     }
+    console.error('===========================');
 
-    // Response format
+    const statusCode = err.statusCode || 500;
+    const message = err.message || 'Có lỗi xảy ra trên server. Vui lòng thử lại sau.';
+
     const errorResponse = {
         success: false,
         message,
         timestamp: new Date().toISOString(),
         path: req.originalUrl,
-        method: req.method
     };
-
-    // Add stack trace in development
-    if (NODE_ENV === 'development') {
-        errorResponse.stack = err.stack;
-        errorResponse.details = err;
-    }
 
     res.status(statusCode).json(errorResponse);
 });
 
-// 404 handler - phải đặt sau tất cả routes
+// Xử lý Route không tồn tại (404 Handler) - phải đặt ở cuối cùng.
 app.use('*', (req, res) => {
     res.status(404).json({
         success: false,
-        message: `Route ${req.method} ${req.originalUrl} không tồn tại`,
-        timestamp: new Date().toISOString(),
-        availableEndpoints: {
-            documentation: '/api-docs',
-            health: '/health',
-            api: '/api',
-            auth: '/api/auth',
-            bookings: '/api/bookings',
-            cinemaRooms: '/api/cinema-rooms',
-            movies: '/api/movies',
-            members: '/api/members',
-            statistics: '/api/booking-statistics',
-            expiration: '/api/booking-expiration',
-            seats: '/api/seats'
-        }
+        message: `Đường dẫn ${req.method} ${req.originalUrl} không tồn tại trên server.`
     });
 });
 
-// === Graceful Shutdown ===
+// === Quá trình tắt ứng dụng một cách an toàn (Graceful Shutdown) ===
 const gracefulShutdown = (signal) => {
-    console.log(`🔄 Graceful shutdown initiated by ${signal}...`);
+    console.log(`🔄 Nhận được tín hiệu ${signal}. Bắt đầu quá trình tắt ứng dụng an toàn...`);
 
-    // Dừng background services
-    try {
-        // bookingExpirationService.stop();
-        // console.log('✅ Booking Expiration Service stopped');
+    // Dừng các services chạy nền
+    bookingExpirationService.stop();
+    showtimeExpirationService.stop();
+    movieStatusService.stop();
+    ticketCancellationService.stop(); // ✅ Dừng ticket cancellation service
+    promotionExpirationService.stop(); // ✅ Dừng promotion expiration service
+    console.log('✅ Đã dừng các services chạy nền.');
 
-        // // ✅ Dừng showtime expiration service
-        // showtimeExpirationService.stop();
-        // console.log('✅ Showtime Expiration Service stopped');
-
-        // console.log('✅ All background services stopped');
-    } catch (error) {
-        console.error('❌ Error stopping background services:', error);
-    }
-
-    // Đóng server
-    server.close((err) => {
-        if (err) {
-            console.error('❌ Error closing HTTP server:', err);
-            process.exit(1);
-        }
-
-        console.log('✅ HTTP server closed');
+    // Đóng server Express
+    server.close(() => {
+        console.log('✅ Server HTTP đã đóng.');
+        // Đóng kết nối database nếu cần
+        // ...
         process.exit(0);
     });
 
-    // Force exit sau 10 giây nếu không thể shutdown gracefully
+    // Buộc tắt sau một khoảng thời gian nếu không thể đóng an toàn
     setTimeout(() => {
-        console.error('❌ Could not close connections in time, forcefully shutting down');
+        console.error('❌ Không thể đóng các kết nối kịp thời, buộc phải tắt ứng dụng.');
         process.exit(1);
-    }, 10000);
+    }, 10000); // 10 giây
 };
 
-// Event listeners cho graceful shutdown
+// Lắng nghe các tín hiệu tắt ứng dụng
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT')); // Ctrl+C
 
-// Xử lý uncaught exceptions
+// Xử lý các lỗi không được bắt (Uncaught Exceptions)
 process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error);
-    console.error('Stack:', error.stack);
-
-    // Graceful shutdown
+    console.error('❌ Lỗi UNCAUGHT EXCEPTION:', error);
     gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
 
+// Xử lý các promise bị từ chối mà không có .catch()
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection at:', promise);
-    console.error('Reason:', reason);
-
-    // Graceful shutdown
+    console.error('❌ Lỗi UNHANDLED REJECTION tại:', promise, 'lý do:', reason);
     gracefulShutdown('UNHANDLED_REJECTION');
 });
 
 // === Khởi động Server ===
-const server = app.listen(PORT, () => {
+const server = createServer(app);
+
+// ✅ Khởi tạo Socket.IO server
+const io = new Server(server, {
+    cors: {
+        origin: process.env.FRONTEND_URL || "http://localhost:3000",
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    transports: ['websocket', 'polling']
+});
+
+console.log('🔄 Đang khởi tạo WebSocket server cho real-time seat selection...');
+
+// Import và khởi tạo WebSocket handlers
+const { initSocketHandlers } = require('./websocket/socketHandler');
+initSocketHandlers(io);
+
+console.log('✅ WebSocket server đã được khởi tạo thành công!');
+
+server.listen(PORT, () => {
     console.log('\n🎬 ===============================================');
-    console.log('🚀 GALAXY CINEMA API SERVER STARTED');
+    console.log('🚀 SERVER API GALAXY CINEMA ĐÃ KHỞI ĐỘNG');
     console.log('===============================================');
-    console.info(`🌐 Server running on: http://localhost:${PORT}`);
-    console.info(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
-    console.info(`🏥 Health Check: http://localhost:${PORT}/health`);
-    console.info(`🔧 Environment: ${NODE_ENV}`);
-    console.info(`📅 Started at: ${new Date().toISOString()}`);
+    console.info(`🌐 Server đang chạy tại: http://localhost:${PORT}`);
+    console.info(`📚 Tài liệu API: http://localhost:${PORT}/api-docs`);
+    console.info(`🔧 Môi trường: ${NODE_ENV}`);
+    console.info(`📅 Thời gian khởi động: ${new Date().toISOString()}`);
+    console.info(`🔌 WebSocket server sẵn sàng cho real-time seat selection`);
     console.log('===============================================\n');
 
-    // Khởi động background services sau khi server đã sẵn sàng
+    // Khởi động các tiến trình chạy nền sau khi server sẵn sàng.
     if (NODE_ENV !== 'test') {
-        setTimeout(async () => { // ✅ Thay đổi thành async
-            await startServices();
-        }, 1000); // Delay 1 giây để đảm bảo server đã sẵn sàng
+        setTimeout(startServices, 1000);
     }
 });
 
-// Handle server errors
+// Xử lý lỗi của server (ví dụ: cổng đã được sử dụng).
 server.on('error', (error) => {
-    if (error.syscall !== 'listen') {
-        throw error;
-    }
-
+    if (error.syscall !== 'listen') throw error;
     switch (error.code) {
         case 'EACCES':
-            console.error(`❌ Port ${PORT} requires elevated privileges`);
+            console.error(`❌ Cổng ${PORT} yêu cầu quyền quản trị.`);
             process.exit(1);
-            break;
         case 'EADDRINUSE':
-            console.error(`❌ Port ${PORT} is already in use`);
+            console.error(`❌ Cổng ${PORT} đã được sử dụng.`);
             process.exit(1);
-            break;
         default:
             throw error;
     }
 });
 
-// Export app để có thể sử dụng trong testing
+// Export app để có thể sử dụng cho việc kiểm thử (testing).
 module.exports = app;
+
+// Khởi tạo hệ thống queue
+const logger = require('./utils/logger');
+try {
+  // Kiểm tra có biến môi trường redis hay không
+  const hasRedis = process.env.REDIS_HOST || process.env.REDIS_URL;
+  
+  if (hasRedis) {
+    logger.info('Khởi tạo hệ thống email queue với Redis...');
+    require('./queues');
+    logger.info('Hệ thống email queue đã được khởi tạo thành công!');
+  } else {
+    logger.info('⚠️ Không cấu hình Redis - hệ thống sẽ gửi email trực tiếp trong background');
+  }
+} catch (queueError) {
+  logger.warn(`⚠️ Không thể khởi tạo queue (${queueError.message}) - email sẽ được gửi trực tiếp trong background`);
+}

@@ -4,7 +4,7 @@
 const jwt = require('jsonwebtoken');
 
 // Lấy cache instance
-const cache = require('../config/cache').get();
+const { CacheService } = require('../config/cache');
 
 /**
  * Service quản lý blacklist token để implement logout chức năng
@@ -42,7 +42,7 @@ class TokenBlacklistService {
 
             // Lưu token vào cache với TTL = thời gian còn lại của token
             const cacheKey = this.BLACKLIST_PREFIX + token;
-            cache.set(cacheKey, {
+            await CacheService.set(cacheKey, {
                 blacklistedAt: new Date().toISOString(),
                 userId: decoded.userId || decoded.id,
                 email: decoded.email,
@@ -66,7 +66,7 @@ class TokenBlacklistService {
     async isTokenBlacklisted(token) {
         try {
             const cacheKey = this.BLACKLIST_PREFIX + token;
-            const blacklistData = cache.get(cacheKey);
+            const blacklistData = await CacheService.get(cacheKey);
 
             const isBlacklisted = !!blacklistData;
 
@@ -91,7 +91,7 @@ class TokenBlacklistService {
     async removeFromBlacklist(token) {
         try {
             const cacheKey = this.BLACKLIST_PREFIX + token;
-            cache.del(cacheKey);
+            await CacheService.del(cacheKey);
             console.log(`[TokenBlacklistService] Token removed from blacklist: ${token.substring(0, 20)}...`);
             return true;
         } catch (error) {
@@ -106,15 +106,13 @@ class TokenBlacklistService {
      */
     async getBlacklistStats() {
         try {
-            const allKeys = cache.keys();
-            const blacklistKeys = allKeys.filter(key => key.startsWith(this.BLACKLIST_PREFIX));
+            // Redis không hỗ trợ keys() trực tiếp, trả về thông tin cơ bản
+            const cacheStats = await CacheService.getStats();
 
             const stats = {
-                totalBlacklistedTokens: blacklistKeys.length,
-                blacklistKeys: blacklistKeys.map(key => ({
-                    key: key.replace(this.BLACKLIST_PREFIX, '').substring(0, 20) + '...',
-                    data: cache.get(key)
-                }))
+                totalBlacklistedTokens: 'N/A (Redis mode)',
+                cacheType: CacheService.isRedis() ? 'Redis' : 'Memory',
+                cacheStats: cacheStats
             };
 
             console.log('[TokenBlacklistService] Blacklist stats:', stats);
@@ -132,10 +130,22 @@ class TokenBlacklistService {
      */
     async clearAllBlacklistedTokens() {
         try {
+            // Redis mode: Flush all cache (cẩn thận!)
+            if (CacheService.isRedis()) {
+                console.log('[TokenBlacklistService] Warning: Clearing ALL Redis cache (not just blacklist)');
+                await CacheService.flushAll();
+                console.log('[TokenBlacklistService] All Redis cache cleared');
+                return true;
+            }
+
+            // Memory cache: có thể lấy keys
+            const cache = await CacheService.getCacheInstance();
             const allKeys = cache.keys();
             const blacklistKeys = allKeys.filter(key => key.startsWith(this.BLACKLIST_PREFIX));
 
-            blacklistKeys.forEach(key => cache.del(key));
+            for (const key of blacklistKeys) {
+                await CacheService.del(key);
+            }
 
             console.log(`[TokenBlacklistService] Cleared ${blacklistKeys.length} blacklisted tokens`);
             return true;

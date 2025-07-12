@@ -23,8 +23,6 @@ class NotificationController {
                 });
             }
 
-            console.log(`[NotificationController] Getting notifications for user: ${userId}`);
-
             const result = await this.notificationService.getUserNotificationsAsync(userId);
 
             return res.status(200).json(result);

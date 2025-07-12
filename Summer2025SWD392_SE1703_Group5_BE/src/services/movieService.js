@@ -1,5 +1,5 @@
 // services/movieService.js
-const { Movie, MovieRating, Showtime, CinemaRoom, User, sequelize } = require('../models');
+const { Movie, MovieRating, Showtime, CinemaRoom, User, TicketBooking, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const cloudinaryService = require('./cloudinaryService');
 
@@ -48,6 +48,7 @@ class MovieService {
             Release_Date: movie.Release_Date,
             Premiere_Date: movie.Premiere_Date,
             End_Date: movie.End_Date,
+            Production_Company: movie.Production_Company,
             Director: movie.Director,
             Cast: movie.Cast,
             Duration: movie.Duration,
@@ -59,11 +60,40 @@ class MovieService {
             Poster_URL: movie.Poster_URL,
             Trailer_Link: movie.Trailer_Link,
             Status: movie.Status,
-            Average_Rating: movie.MovieRatings?.length > 0
-                ? movie.MovieRatings.reduce((sum, r) => sum + r.Rating, 0) / movie.MovieRatings.length
-                : 0,
-            Rating_Count: movie.MovieRatings?.length || 0,
-            Showtimes_Count: movie.Showtimes?.length || 0
+            Created_By: movie.Created_By,
+            Created_At: movie.Created_At,
+            Updated_At: movie.Updated_At,
+            MovieRatings: movie.MovieRatings,
+            // Fix timezone issue cho Showtimes
+            Showtimes: movie.Showtimes.map(showtime => {
+                // Fix timezone issue cho Start_Time
+                let formattedStartTime = showtime.Start_Time;
+                if (typeof showtime.Start_Time === 'string') {
+                    formattedStartTime = showtime.Start_Time;
+                } else if (showtime.Start_Time instanceof Date) {
+                    const hours = showtime.Start_Time.getUTCHours().toString().padStart(2, '0');
+                    const minutes = showtime.Start_Time.getUTCMinutes().toString().padStart(2, '0');
+                    const seconds = showtime.Start_Time.getUTCSeconds().toString().padStart(2, '0');
+                    formattedStartTime = `${hours}:${minutes}:${seconds}`;
+                }
+
+                // Fix timezone issue cho End_Time  
+                let formattedEndTime = showtime.End_Time;
+                if (typeof showtime.End_Time === 'string') {
+                    formattedEndTime = showtime.End_Time;
+                } else if (showtime.End_Time instanceof Date) {
+                    const hours = showtime.End_Time.getUTCHours().toString().padStart(2, '0');
+                    const minutes = showtime.End_Time.getUTCMinutes().toString().padStart(2, '0');
+                    const seconds = showtime.End_Time.getUTCSeconds().toString().padStart(2, '0');
+                    formattedEndTime = `${hours}:${minutes}:${seconds}`;
+                }
+
+                return {
+                    ...showtime.toJSON(),
+                    Start_Time: formattedStartTime,
+                    End_Time: formattedEndTime
+                };
+            })
         }));
     }
 
@@ -106,26 +136,48 @@ class MovieService {
                 let dateKey;
                 try {
                     if (showtime.Show_Date instanceof Date) {
-                        dateKey = showtime.Show_Date.toDateString();
+                        // Fix timezone issue: Sử dụng toISOString().split('T')[0] thay vì toDateString
+                        dateKey = showtime.Show_Date.toISOString().split('T')[0];
                     } else {
                         // Chuyển đổi sang Date object
                         const dateObj = new Date(showtime.Show_Date);
-                        dateKey = dateObj.toDateString();
+                        dateKey = dateObj.toISOString().split('T')[0];
                     }
                 } catch (error) {
                     console.error('Lỗi xử lý Show_Date:', showtime.Show_Date);
                     console.error(error);
                     // Sử dụng ngày hiện tại làm giá trị mặc định nếu không thể chuyển đổi
-                    dateKey = new Date().toDateString();
+                    dateKey = new Date().toISOString().split('T')[0];
                 }
 
                 if (!acc[dateKey]) {
                     acc[dateKey] = [];
                 }
+
+                // Fix timezone issue cho Start_Time và End_Time
+                let formattedStartTime = showtime.Start_Time;
+                let formattedEndTime = showtime.End_Time;
+
+                if (typeof showtime.Start_Time === 'string') {
+                    formattedStartTime = showtime.Start_Time;
+                } else if (showtime.Start_Time instanceof Date) {
+                    const hours = showtime.Start_Time.getUTCHours().toString().padStart(2, '0');
+                    const minutes = showtime.Start_Time.getUTCMinutes().toString().padStart(2, '0');
+                    formattedStartTime = `${hours}:${minutes}:00`;
+                }
+
+                if (typeof showtime.End_Time === 'string') {
+                    formattedEndTime = showtime.End_Time;
+                } else if (showtime.End_Time instanceof Date) {
+                    const hours = showtime.End_Time.getUTCHours().toString().padStart(2, '0');
+                    const minutes = showtime.End_Time.getUTCMinutes().toString().padStart(2, '0');
+                    formattedEndTime = `${hours}:${minutes}:00`;
+                }
+
                 acc[dateKey].push({
                     Showtime_ID: showtime.Showtime_ID,
-                    Start_Time: showtime.Start_Time,
-                    End_Time: showtime.End_Time,
+                    Start_Time: formattedStartTime,
+                    End_Time: formattedEndTime,
                     Price_Tier: showtime.Price_Tier,
                     Base_Price: showtime.Base_Price,
                     Capacity_Available: showtime.Capacity_Available,
@@ -247,6 +299,37 @@ class MovieService {
             throw new Error(`Không tìm thấy phim có ID ${data.Movie_ID}`);
         }
 
+        // ✅ SECURITY FIX: Kiểm tra active bookings trước khi cho phép cập nhật thông tin quan trọng
+        const criticalFields = ['Movie_Name', 'Duration', 'Status', 'Release_Date', 'Premiere_Date'];
+        const hasCriticalChanges = criticalFields.some(field =>
+            data[field] !== undefined && data[field] !== movie[field]
+        );
+
+        if (hasCriticalChanges) {
+            console.log(`[updateMovie] Phát hiện thay đổi thông tin quan trọng cho phim ID ${data.Movie_ID}, kiểm tra active bookings...`);
+
+            const activeBookings = await TicketBooking.count({
+                include: [{
+                    model: Showtime,
+                    as: 'Showtime',
+                    where: { Movie_ID: data.Movie_ID },
+                    required: true
+                }],
+                where: {
+                    Status: { [Op.in]: ['Pending', 'Confirmed'] }
+                }
+            });
+
+            if (activeBookings > 0) {
+                const errorMsg = `Không thể cập nhật thông tin phim quan trọng vì có ${activeBookings} booking đang hoạt động. ` +
+                               `Vui lòng chờ khách hàng hoàn thành các booking hoặc liên hệ để hoàn tiền trước khi cập nhật.`;
+                console.error(`[updateMovie] ${errorMsg}`);
+                throw new Error(errorMsg);
+            }
+
+            console.log(`[updateMovie] An toàn để cập nhật - không có active bookings`);
+        }
+
         // Kiểm tra tên phim trùng lặp
         if (data.Movie_Name !== movie.Movie_Name) {
             const existingMovie = await Movie.findOne({
@@ -298,7 +381,7 @@ class MovieService {
         return this.mapMovieToResponseDTO(movie);
     }
 
-    // Xóa phim (soft delete)
+    // Xóa phim (soft delete) - ✅ SECURITY ENHANCED
     async deleteMovie(id) {
         const movie = await Movie.findByPk(id);
         if (!movie) {
@@ -314,17 +397,42 @@ class MovieService {
         });
 
         if (hasShowtimes) {
+            // ✅ SECURITY FIX: Kiểm tra active bookings trước khi cancel phim
+            console.log(`[deleteMovie] Phim ID ${id} có showtimes, kiểm tra active bookings...`);
+            
+            const activeBookings = await TicketBooking.count({
+                include: [{
+                    model: Showtime,
+                    as: 'Showtime',
+                    where: { Movie_ID: id },
+                    required: true
+                }],
+                where: {
+                    Status: { [Op.in]: ['Pending', 'Confirmed'] }
+                }
+            });
+
+            if (activeBookings > 0) {
+                const errorMsg = `Không thể hủy phim vì có ${activeBookings} booking đang hoạt động. ` +
+                               `Vui lòng chờ khách hàng hoàn thành các booking hoặc liên hệ để hoàn tiền trước khi hủy phim.`;
+                console.error(`[deleteMovie] ${errorMsg}`);
+                throw new Error(errorMsg);
+            }
+
+            // An toàn để đánh dấu 'Cancelled' vì không có active bookings
             await movie.update({
                 Status: 'Cancelled',
                 Updated_At: sequelize.fn('GETDATE')
             });
+            
+            console.log(`[deleteMovie] Phim ID ${id} đã được đánh dấu 'Cancelled' (đã kiểm tra không có active bookings)`);
             return {
                 status: 'deactivated',
-                message: 'Phim đã có suất chiếu, đã đánh dấu là đã hủy thay vì xóa'
+                message: 'Phim đã có suất chiếu, đã đánh dấu là đã hủy thay vì xóa (đã kiểm tra không có booking hoạt động)'
             };
         }
 
-        // Đánh dấu phim là đã xóa
+        // Đánh dấu phim là đã xóa (không có showtimes)
         await movie.update({
             Status: 'Inactive',
             Updated_At: sequelize.fn('GETDATE')
@@ -336,6 +444,7 @@ class MovieService {
             { where: { Movie_ID: id } }
         );
 
+        console.log(`[deleteMovie] Phim ID ${id} đã được đánh dấu 'Inactive' (không có showtimes)`);
         return {
             status: 'deleted',
             message: 'Phim đã được đánh dấu là đã xóa'
@@ -423,8 +532,10 @@ class MovieService {
     // Lấy phim đang chiếu
     async getNowShowingMovies() {
         const today = new Date();
+        // Reset giờ về 00:00:00 để so sánh chính xác ngày
+        const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-        return await Movie.findAll({
+        const movies = await Movie.findAll({
             where: {
                 Status: 'Now Showing',
                 [Op.and]: [
@@ -449,8 +560,86 @@ class MovieService {
                     required: false
                 }
             ],
-            order: [['Release_Date', 'DESC']]
         });
+        
+        // Tính số lượng xuất chiếu trong ngày hôm nay cho mỗi phim (chỉ tính status Scheduled)
+        movies.forEach(movie => {
+            // Lọc xuất chiếu chỉ trong ngày hôm nay VÀ có trạng thái Scheduled
+            movie.TodayShowtimes = movie.Showtimes ? movie.Showtimes.filter(showtime => {
+                // Kiểm tra trạng thái
+                if (showtime.Status !== 'Scheduled') {
+                    return false;
+                }
+                
+                // Chuyển đổi Show_Date thành Date object nếu là string
+                let showtimeDate;
+                if (typeof showtime.Show_Date === 'string') {
+                    showtimeDate = new Date(showtime.Show_Date);
+                } else {
+                    showtimeDate = new Date(showtime.Show_Date);
+                }
+                
+                // Reset giờ về 00:00:00 để so sánh chính xác ngày
+                showtimeDate = new Date(showtimeDate.getFullYear(), showtimeDate.getMonth(), showtimeDate.getDate());
+                
+                // So sánh ngày
+                return showtimeDate.getTime() === todayDate.getTime();
+            }) : [];
+        });
+        
+        // Sắp xếp phim theo số lượng xuất chiếu ngày hôm nay giảm dần
+        movies.sort((a, b) => {
+            const todayShowtimesA = a.TodayShowtimes.length;
+            const todayShowtimesB = b.TodayShowtimes.length;
+            return todayShowtimesB - todayShowtimesA; // Sắp xếp giảm dần
+        });
+
+        // Fix timezone issue: Format Start_Time và End_Time trong Showtimes
+        return movies.map(movie => ({
+            Movie_ID: movie.Movie_ID,
+            Movie_Name: movie.Movie_Name,
+            Release_Date: movie.Release_Date,
+            Premiere_Date: movie.Premiere_Date,
+            End_Date: movie.End_Date,
+            Production_Company: movie.Production_Company,
+            Director: movie.Director,
+            Cast: movie.Cast,
+            Duration: movie.Duration,
+            Genre: movie.Genre,
+            Rating: movie.Rating,
+            Language: movie.Language,
+            Country: movie.Country,
+            Synopsis: movie.Synopsis,
+            Poster_URL: movie.Poster_URL,
+            Trailer_Link: movie.Trailer_Link,
+            Status: movie.Status,
+            Created_By: movie.Created_By,
+            Created_At: movie.Created_At,
+            Updated_At: movie.Updated_At,
+            MovieRatings: movie.MovieRatings,
+            Today_Showtimes_Count: movie.TodayShowtimes.length,
+            Showtimes: movie.Showtimes?.map(showtime => ({
+                ...showtime.toJSON(),
+                Start_Time: this.formatTime(showtime.Start_Time),
+                End_Time: this.formatTime(showtime.End_Time)
+            })) || []
+        }));
+    }
+
+    // Helper method để format time - Fix timezone issue
+    formatTime(time) {
+        if (!time) return null;
+        if (typeof time === 'string') {
+            return time.slice(0, 8); // Chỉ lấy HH:MM:SS từ string
+        }
+        // Fix timezone issue: Sử dụng UTC để tránh timezone offset
+        if (time instanceof Date) {
+            const hours = time.getUTCHours().toString().padStart(2, '0');
+            const minutes = time.getUTCMinutes().toString().padStart(2, '0');
+            const seconds = time.getUTCSeconds().toString().padStart(2, '0');
+            return `${hours}:${minutes}:${seconds}`;
+        }
+        return null;
     }
 
     // Lấy phim theo thể loại
@@ -823,8 +1012,8 @@ class MovieService {
 
                 cinemaData.ShowtimesByDate[dateKey].push({
                     Showtime_ID: showtime.Showtime_ID,
-                    Start_Time: showtime.Start_Time,
-                    End_Time: showtime.End_Time,
+                    Start_Time: this.formatTime(showtime.Start_Time),
+                    End_Time: this.formatTime(showtime.End_Time),
                     Price_Tier: showtime.Price_Tier,
                     Base_Price: showtime.Base_Price,
                     Capacity_Available: showtime.Capacity_Available,
@@ -929,8 +1118,8 @@ class MovieService {
                 // Thêm thông tin suất chiếu vào mảng theo ngày
                 showtimesByDate[dateKey].push({
                     Showtime_ID: showtime.Showtime_ID,
-                    Start_Time: showtime.Start_Time,
-                    End_Time: showtime.End_Time,
+                    Start_Time: this.formatTime(showtime.Start_Time),
+                    End_Time: this.formatTime(showtime.End_Time),
                     Price_Tier: showtime.Price_Tier,
                     Base_Price: showtime.Base_Price,
                     Capacity_Available: showtime.Capacity_Available,

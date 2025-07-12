@@ -23,7 +23,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'PointsEarning',
     tableName: 'Points_Earning',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return PointsEarning;

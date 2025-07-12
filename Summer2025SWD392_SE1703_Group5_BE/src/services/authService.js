@@ -13,7 +13,7 @@ const UserRepository = require('../repositories/userRepository');
 
 // THÊM IMPORT EMAIL VERIFICATION SERVICE
 const AccountLockingService = require('../services/accountLockingService');
-const cache = require('../config/cache').get();
+const { CacheService } = require('../config/cache');
 
 /**
  * Tạo mật khẩu ngẫu nhiên
@@ -387,7 +387,7 @@ const AuthService = {
         // Store token with user ID and email, expires in 1 hour (3600 seconds)
         const tokenExpirySeconds = parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRES_MINUTES || '60', 10) * 60;
 
-        cache.set(tokenCacheKey, { userId: user.User_ID, email: user.Email }, tokenExpirySeconds);
+        await CacheService.set(tokenCacheKey, { userId: user.User_ID, email: user.Email }, tokenExpirySeconds);
         logger.info(`[AuthService.initiatePasswordReset] Password reset token generated and cached for user ${user.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
 
         // Construct reset URL to point to the backend-served form
@@ -428,7 +428,7 @@ const AuthService = {
             throw new Error('Token không hợp lệ hoặc đã hết hạn.');
         }
         const tokenCacheKey = `password_reset_token_${token}`;
-        const storedData = cache.get(tokenCacheKey);
+        const storedData = await CacheService.get(tokenCacheKey);
 
         if (!storedData) {
             logger.warn(`[AuthService.verifyPasswordResetToken] Token not found in cache or expired. Key: ${tokenCacheKey}`);
@@ -454,7 +454,7 @@ const AuthService = {
 
         // Invalidate the token
         const tokenCacheKey = `password_reset_token_${token}`;
-        cache.del(tokenCacheKey);
+        await CacheService.del(tokenCacheKey);
         logger.info(`[AuthService.completePasswordReset] Password reset token invalidated. Key: ${tokenCacheKey}`);
 
         // Optionally, send a confirmation email that password was changed
@@ -564,7 +564,7 @@ const AuthService = {
     // Lấy profile
     async getUserProfile(userId) {
         const user = await User.findByPk(userId, {
-            attributes: ['id', 'fullName', 'email', 'phoneNumber', 'address', 'dateOfBirth', 'sex', 'role']
+            attributes: ['User_ID', 'Full_Name', 'Email', 'Phone_Number', 'Address', 'Date_Of_Birth', 'Sex', 'Role', 'Cinema_ID', 'Account_Status', 'Created_At']
         });
         if (!user) throw new Error('Không tìm thấy người dùng');
         return user;
@@ -744,7 +744,7 @@ const AuthService = {
             const tokenExpirySeconds = 7 * 24 * 60 * 60; // 7 ngày
 
             // Lưu token vào cache
-            cache.set(tokenCacheKey, { userId: newUser.User_ID, email: newUser.Email }, tokenExpirySeconds);
+            await CacheService.set(tokenCacheKey, { userId: newUser.User_ID, email: newUser.Email }, tokenExpirySeconds);
             logger.info(`Password setup token generated for new user ${newUser.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
 
             // Tạo URL để thiết lập mật khẩu
@@ -923,7 +923,7 @@ const AuthService = {
             const tokenExpirySeconds = 7 * 24 * 60 * 60; // 7 ngày
 
             // Lưu token vào cache
-            cache.set(tokenCacheKey, { userId: newUser.User_ID, email: newUser.Email }, tokenExpirySeconds);
+            await CacheService.set(tokenCacheKey, { userId: newUser.User_ID, email: newUser.Email }, tokenExpirySeconds);
             logger.info(`Password setup token generated for new user ${newUser.User_ID}. Key: ${tokenCacheKey}, Expiry: ${tokenExpirySeconds}s`);
 
             // Tạo URL để thiết lập mật khẩu

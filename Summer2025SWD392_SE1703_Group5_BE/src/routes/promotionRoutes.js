@@ -434,4 +434,142 @@ router.delete('/:id', authMiddleware, authorizeRoles('Admin'), promotionControll
  */
 router.get('/customer/used-promotions', authMiddleware, promotionController.getUserPromotions);
 
+/**
+ * @swagger
+ * /api/promotions/available/{bookingId}:
+ *   get:
+ *     summary: Lấy danh sách mã khuyến mãi phù hợp với booking và chưa được sử dụng
+ *     description: >
+ *       API này trả về danh sách các mã khuyến mãi mà người dùng có thể áp dụng cho booking cụ thể.
+ *       Chỉ hiển thị những mã khuyến mãi còn hiệu lực, phù hợp với giá trị đơn hàng và chưa được người dùng sử dụng.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của đơn đặt vé
+ *         example: 123
+ *     responses:
+ *       200:
+ *         description: Danh sách mã khuyến mãi phù hợp
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Tìm thấy 3 mã khuyến mãi phù hợp"
+ *                 booking_info:
+ *                   type: object
+ *                   properties:
+ *                     Booking_ID:
+ *                       type: integer
+ *                       example: 123
+ *                     Total_Amount:
+ *                       type: number
+ *                       example: 250000
+ *                     User_Name:
+ *                       type: string
+ *                       example: "Nguyễn Văn A"
+ *                 promotions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       Promotion_ID:
+ *                         type: integer
+ *                         example: 1
+ *                       Title:
+ *                         type: string
+ *                         example: "Giảm giá 20% cho khách hàng mới"
+ *                       Promotion_Code:
+ *                         type: string
+ *                         example: "NEWUSER20"
+ *                       Discount_Description:
+ *                         type: string
+ *                         example: "Giảm 20% (tối đa 50,000đ)"
+ *                       Discount_Amount:
+ *                         type: number
+ *                         example: 50000
+ *                       Final_Amount:
+ *                         type: number
+ *                         example: 200000
+ *       400:
+ *         description: Booking ID không hợp lệ
+ *       401:
+ *         description: Chưa xác thực
+ *       404:
+ *         description: Không tìm thấy booking
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/available/:bookingId', authMiddleware, promotionController.getAvailablePromotionsForBooking);
+
+/**
+ * @swagger
+ * /api/promotions/points/{bookingId}:
+ *   delete:
+ *     summary: Xóa điểm khỏi booking (hoàn lại điểm đã sử dụng)
+ *     description: >
+ *       API này cho phép xóa điểm đã sử dụng khỏi booking và hoàn lại điểm cho người dùng.
+ *       Chỉ có thể thực hiện với booking có trạng thái "Pending" và đã sử dụng điểm.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của đơn đặt vé
+ *         example: 123
+ *     responses:
+ *       200:
+ *         description: Xóa điểm thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Đã xóa thành công 50 điểm khỏi booking"
+ *                 booking_id:
+ *                   type: integer
+ *                   example: 123
+ *                 points_refunded:
+ *                   type: integer
+ *                   example: 50
+ *                 discount_amount_removed:
+ *                   type: number
+ *                   example: 50000
+ *                 new_total_amount:
+ *                   type: number
+ *                   example: 300000
+ *                 user_new_points_balance:
+ *                   type: integer
+ *                   example: 150
+ *       400:
+ *         description: Booking ID không hợp lệ hoặc booking không có điểm được sử dụng
+ *       401:
+ *         description: Chưa xác thực
+ *       404:
+ *         description: Không tìm thấy booking
+ *       500:
+ *         description: Lỗi server
+ */
+router.delete('/points/:bookingId', authMiddleware, promotionController.removePointsFromBooking);
+
 module.exports = router;

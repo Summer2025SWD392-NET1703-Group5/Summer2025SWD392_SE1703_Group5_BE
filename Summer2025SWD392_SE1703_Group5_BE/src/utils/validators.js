@@ -1,11 +1,8 @@
-// File: src/utils/validators.js
-// Mô tả: Chứa các schema validation sử dụng thư viện Joi để kiểm tra dữ liệu đầu vào cho các request.
 
 const Joi = require('joi'); // Import thư viện Joi.
 
 // Đối tượng chứa các schema validation khác nhau.
 const validators = {
-    // Schema cho việc đăng ký người dùng mới.
     register: Joi.object({
         email: Joi.string().email().required()
             .messages({
@@ -48,7 +45,6 @@ const validators = {
             })
     }),
 
-    // Schema cho việc đăng nhập.
     login: Joi.object({
         email: Joi.string().email().required()
             .messages({
@@ -63,8 +59,7 @@ const validators = {
             })
     }),
 
-    // Schema cho việc cập nhật thông tin hồ sơ người dùng.
-    // Lưu ý: Các trường ở đây thường là tùy chọn (optional) vì người dùng có thể chỉ muốn cập nhật một vài thông tin.
+    // Lưu ýCác trường ở đây thường là tùy chọn (optional) vì người dùng có thể chỉ muốn cập nhật một vài thông tin.
     updateProfile: Joi.object({
         fullName: Joi.string().optional()
             .messages({
@@ -95,7 +90,6 @@ const validators = {
             'object.min': 'Cần cung cấp ít nhất một trường để cập nhật thông tin.'
         }),
 
-    // Schema cho việc thay đổi mật khẩu.
     changePassword: Joi.object({
         oldPassword: Joi.string().required()
             .messages({
@@ -109,11 +103,8 @@ const validators = {
                 'string.empty': 'Mật khẩu mới không được để trống.',
                 'any.required': 'Mật khẩu mới là trường bắt buộc.'
             })
-        // .invalid(Joi.ref('oldPassword')) // (Tùy chọn) Không cho phép mật khẩu mới trùng mật khẩu cũ
-        // .messages({ 'any.invalid': 'Mật khẩu mới không được trùng với mật khẩu cũ.' })
     }),
 
-    // Schema cho việc yêu cầu reset mật khẩu (thường chỉ cần email).
     resetPasswordRequest: Joi.object({
         email: Joi.string().email().required()
             .messages({
@@ -122,8 +113,7 @@ const validators = {
                 'any.required': 'Email là trường bắt buộc.'
             })
     }),
-
-    // Schema cho việc thực hiện reset mật khẩu (khi đã có token).
+    
     confirmPasswordReset: Joi.object({
         token: Joi.string().required()
             .messages({
@@ -138,16 +128,7 @@ const validators = {
                 'any.required': 'Mật khẩu mới là trường bắt buộc.'
             })
     }),
-
-    // TODO: Thêm các schema validation khác cho các entities khác của ứng dụng (ví dụ: Movie, Showtime, Booking, ...)
-    // createMovie: Joi.object({ ... }),
-    // updateMovie: Joi.object({ ... }),
 };
 
-// Các console.log này hữu ích để debug khi khởi động, nhưng có thể xóa trong production.
-console.log('[validators.js] Exporting validators object with keys:', Object.keys(validators));
-if (validators.register) {
-    console.log('[validators.js] typeof validators.register before export:', typeof validators.register.validate);
-}
 
-module.exports = validators; // Export đối tượng validators.
+module.exports = validators;

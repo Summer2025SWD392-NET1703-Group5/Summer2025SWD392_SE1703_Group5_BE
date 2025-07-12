@@ -411,15 +411,14 @@ class AuthController {
                 User_ID: user.User_ID,
                 Full_Name: user.Full_Name,
                 Email: user.Email,
-                Phone: user.Phone,
+                Phone_Number: user.Phone_Number, // ✅ FIX: Đúng tên trường trong DB
                 Date_Of_Birth: user.Date_Of_Birth,
-                Gender: user.Gender,
+                Sex: user.Sex, // ✅ FIX: Đúng tên trường trong DB (giới tính)
+                Address: user.Address, // ✅ ADD: Thêm địa chỉ
                 Role: user.Role,
                 Cinema_ID: user.Cinema_ID,
-                Loyalty_Points: user.Loyalty_Points,
-                Avatar: user.Avatar,
-                Created_At: user.Created_At,
-                Status: user.Status
+                Account_Status: user.Account_Status, // ✅ FIX: Đúng tên trường trong DB
+                Created_At: user.Created_At
             };
 
             logger.info(`[authController.getUserProfile] Success for user: ${user.Email}`);

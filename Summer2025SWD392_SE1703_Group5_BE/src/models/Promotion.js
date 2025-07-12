@@ -133,7 +133,7 @@ module.exports = (sequelize) => {
       sequelize,
       modelName: 'Promotion',
       tableName: 'Promotions',
-      schema: 'db_ab91f9_gr5',
+      schema: 'ksf00691_team03',
       timestamps: false,
       hooks: {
         beforeValidate: (promotion, options) => {

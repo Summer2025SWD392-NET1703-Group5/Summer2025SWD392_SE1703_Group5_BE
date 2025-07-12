@@ -35,15 +35,23 @@ const config = {
     user: process.env.DB_USER,             // Tên người dùng để kết nối CSDL.
     password: process.env.DB_PASSWORD,     // Mật khẩu của người dùng.
     port: parseInt(process.env.DB_PORT) || 1433, // Cổng kết nối, mặc định là 1433 cho SQL Server.
+    connectionTimeout: 60000,              // Tăng thời gian timeout kết nối lên 60 giây (từ 30s)
+    requestTimeout: 120000,                // Tăng thời gian timeout cho các câu truy vấn lên 120 giây (từ 60s)
     options: {
         encrypt: true, // Sử dụng mã hóa cho kết nối (true nếu dùng Azure SQL hoặc SQL Server có SSL).
         trustServerCertificate: true, // Tin tưởng chứng chỉ server (true cho local dev, false cho production với cert hợp lệ).
-        enableArithAbort: true // Bắt buộc cho một số truy vấn, nên để true.
+        enableArithAbort: true, // Bắt buộc cho một số truy vấn, nên để true.
+        connectTimeout: 60000    // Tăng timeout kết nối cấp TCP lên 60 giây (từ 30s)
     },
     pool: { // Cấu hình connection pool.
-        max: 10, // Số lượng kết nối tối đa trong pool.
-        min: 0,  // Số lượng kết nối tối thiểu trong pool.
-        idleTimeoutMillis: 30000 // Thời gian (ms) một kết nối có thể không hoạt động trước khi bị đóng.
+        max: 15, // Tăng số lượng kết nối tối đa trong pool lên 15 (từ 10)
+        min: 5,  // Tăng số lượng kết nối tối thiểu lên 5 (từ 2) để luôn có kết nối sẵn sàng
+        idleTimeoutMillis: 60000, // Tăng thời gian (ms) một kết nối có thể không hoạt động lên 60 giây (từ 30s)
+        acquireTimeoutMillis: 60000, // Tăng thời gian tối đa để lấy kết nối từ pool lên 60 giây (từ 30s)
+        createTimeoutMillis: 60000, // Tăng thời gian tối đa để tạo kết nối mới lên 60 giây (từ 30s)
+        destroyTimeoutMillis: 10000, // Tăng thời gian tối đa để đóng kết nối lên 10 giây (từ 5s)
+        reapIntervalMillis: 2000,   // Tăng tần suất kiểm tra các kết nối không hoạt động lên 2 giây (từ 1s)
+        createRetryIntervalMillis: 500 // Tăng khoảng thời gian giữa các lần thử tạo kết nối mới lên 500ms (từ 200ms)
     }
 };
 
@@ -53,30 +61,95 @@ let pool; // Biến để lưu trữ instance của connection pool.
  * Hàm bất đồng bộ để thiết lập và trả về một connection pool đến SQL Server.
  * Nếu pool đã được khởi tạo, hàm sẽ trả về pool hiện có.
  * @returns {Promise<sql.ConnectionPool>} Một promise giải quyết với instance của ConnectionPool.
- * @throws {Error} Ném lỗi nếu không thể kết nối đến CSDL.
+ * @throws {Error} Ném lỗi nếu không thể kết nối đến CSDL sau số lần thử tối đa.
  */
 async function getConnection() {
-    console.log('[database.js] getConnection function called.'); // Log khi hàm được gọi.
-    try {
-        // Chỉ tạo pool mới nếu nó chưa tồn tại.
-        if (!pool) {
-            console.log('[database.js] Creating new connection pool...');
-            pool = await sql.connect(config); // Thực hiện kết nối và tạo pool.
-            console.log('✅ Kết nối database thành công và pool đã được tạo.');
+    // DEBUG: Removed để tăng tốc API
 
-            // (Tùy chọn) Bắt sự kiện lỗi trên pool để theo dõi các vấn đề kết nối có thể xảy ra sau này.
-            pool.on('error', err => {
-                console.error('[database.js] Lỗi từ SQL Server Connection Pool:', err);
-                // Có thể cần xử lý thêm ở đây, ví dụ: thử kết nối lại hoặc thông báo.
-            });
+    // Tham số retry
+    const maxRetries = 5; // Tăng số lần retry lên 5 (từ 3)
+    const retryDelay = 8000; // Tăng thời gian delay giữa các lần retry lên 8 giây (từ 5s)
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            // Kiểm tra xem pool có tồn tại, có được kết nối và không bị đóng
+            if (!pool || pool.closed || !pool.connected) {
+                // Nếu pool tồn tại nhưng bị đóng, thử đóng nó một cách an toàn
+                if (pool) {
+                    try {
+                        console.log('[database.js] Closing existing pool before creating a new one');
+                        await pool.close();
+                    } catch (closeErr) {
+                        console.error('[database.js] Error when closing existing pool:', closeErr.message);
+                        // Tiếp tục ngay cả khi có lỗi khi đóng
+                    }
+                }
+
+                console.log(`[database.js] Creating new connection pool... (attempt ${attempt}/${maxRetries})`);
+                pool = await sql.connect(config); // Thực hiện kết nối và tạo pool.
+                console.log('✅ Kết nối database thành công và pool đã được tạo.');
+
+                // Bắt sự kiện lỗi trên pool để theo dõi các vấn đề kết nối có thể xảy ra sau này.
+                pool.on('error', err => {
+                    console.error('[database.js] Lỗi từ SQL Server Connection Pool:', err);
+                    // Xử lý lỗi kết nối, có thể đánh dấu pool để khởi tạo lại vào lần gọi tiếp theo
+                    if (pool) {
+                        try {
+                            pool.close();
+                        } catch (closeErr) {
+                            console.error('[database.js] Error closing pool after error:', closeErr);
+                        }
+                        pool = null;
+                    }
+                });
+            } else {
+                // Kiểm tra pool có thực sự hoạt động không bằng cách gửi query đơn giản
+                try {
+                    // Test pool with simple query
+                    await pool.request().query('SELECT 1');
+                    // Pool is working correctly
+                } catch (testErr) {
+                    console.error('[database.js] Existing pool failed test query:', testErr.message);
+                    // Nếu test query thất bại, đóng pool và tạo mới
+                    try {
+                        await pool.close();
+                    } catch (closeErr) {
+                        console.error('[database.js] Error closing pool after test failure:', closeErr);
+                    }
+                    pool = null;
+                    // Tiếp tục vòng lặp để tạo pool mới
+                    continue;
+                }
+            }
+            return pool; // Trả về pool đã được khởi tạo.
+        } catch (error) {
+            console.error(`❌ Lỗi kết nối database (attempt ${attempt}/${maxRetries}):`, error);
+
+            // Nếu đã thử tối đa số lần, ném lỗi
+            if (attempt === maxRetries) {
+                console.error(`Đã thử kết nối ${maxRetries} lần không thành công. Dừng cố gắng kết nối.`);
+                // Trả về một đối tượng lỗi thay vì ném lỗi để tránh crash
+                return {
+                    errorStatus: true,
+                    error: error,
+                    message: `Không thể kết nối đến cơ sở dữ liệu sau ${maxRetries} lần thử`
+                };
+            }
+
+            // Nếu chưa đạt số lần thử tối đa, chờ một khoảng thời gian và thử lại
+            console.log(`Sẽ thử kết nối lại sau ${retryDelay / 1000} giây...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+            // Đảm bảo pool cũ được đóng trước khi thử lại
+            if (pool) {
+                try {
+                    await pool.close();
+                } catch (closeErr) {
+                    console.error('[database.js] Error closing pool before retry:', closeErr);
+                }
+                pool = null;
+            }
         }
-        return pool; // Trả về pool đã được khởi tạo.
-    } catch (error) {
-        console.error('❌ Lỗi kết nối database:', error);
-        // Ném lại lỗi để hàm gọi có thể xử lý.
-        // Quan trọng: Việc ném lỗi ở đây sẽ khiến ứng dụng có thể bị crash nếu không được bắt ở nơi gọi.
-        // Cân nhắc việc xử lý lỗi một cách nhẹ nhàng hơn hoặc đảm bảo lỗi được bắt.
-        throw error;
     }
 }
 

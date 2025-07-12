@@ -442,17 +442,11 @@ const UpdateBookingPayment = async (req, res) => {
     try {
         if (!bookingService) return res.status(500).json({ message: "BookingService không khả dụng" });
 
-        logger.info(`[DEBUG-CONTROLLER] Gọi bookingService.updateBookingPayment với bookingId=${bookingId}, userId=${userIdFromToken}`);
-
         // Gọi service để cập nhật thanh toán
         const result = await bookingService.updateBookingPayment(bookingId, userIdFromToken);
 
-        logger.info(`[DEBUG-CONTROLLER] Kết quả từ service: success=${result?.success}, message=${result?.message}`);
-        logger.info(`[DEBUG-CONTROLLER] Payment_Method từ service: ${result?.booking?.Payment_Method}`);
-
         // Kiểm tra kết quả từ service
         if (!result || !result.success) {
-            logger.warn(`[DEBUG-CONTROLLER] Kết quả không thành công từ service: ${JSON.stringify(result)}`);
             return res.status(400).json({
                 message: result?.message || "Cập nhật thanh toán không thành công"
             });
@@ -460,7 +454,6 @@ const UpdateBookingPayment = async (req, res) => {
 
         // Kiểm tra xem có booking trong kết quả không
         if (!result.booking) {
-            logger.error(`[DEBUG-CONTROLLER] Không có booking trong kết quả`);
             return res.status(500).json({
                 message: "Không có thông tin đơn đặt vé trong kết quả"
             });
@@ -468,17 +461,8 @@ const UpdateBookingPayment = async (req, res) => {
 
         // Kiểm tra Payment_Method trong kết quả
         if (!result.booking.Payment_Method) {
-            logger.warn(`[DEBUG-CONTROLLER] Payment_Method không có trong kết quả, thêm mặc định 'Cash'`);
             result.booking.Payment_Method = 'Cash';
         }
-
-        // Log trước khi gửi response
-        logger.info(`[DEBUG-CONTROLLER] Dữ liệu cuối cùng trả về client: ${JSON.stringify({
-            success: result.success,
-            message: result.message,
-            bookingId: result.booking.Booking_ID,
-            paymentMethod: result.booking.Payment_Method
-        })}`);
 
         // Trả về kết quả thành công
         res.status(200).json(result);
@@ -642,7 +626,66 @@ const CancelBooking = async (req, res) => {
             userId
         );
 
-        // 4. Trả về kết quả
+        // 4. 🔧 FIX: Clear tất cả ghế của user và emit WebSocket event
+        try {
+            const { getIO } = require('../websocket/socketHandler');
+            const seatSelectionService = require('../services/seatSelectionService');
+
+            // Lấy showtime ID từ cancellationResult hoặc từ booking data
+            let showtimeId = null;
+
+            // Thử lấy từ cancellationResult trước
+            if (cancellationResult && cancellationResult.data && cancellationResult.data.Showtime_ID) {
+                showtimeId = cancellationResult.data.Showtime_ID;
+            }
+            // Nếu không có, thử lấy từ booking object
+            else if (booking && booking.Showtime_ID) {
+                showtimeId = booking.Showtime_ID;
+            }
+            // Cuối cùng, query lại từ database nếu cần
+            else {
+                try {
+                    const { TicketBooking } = require('../models');
+                    const bookingData = await TicketBooking.findByPk(bookingId, {
+                        attributes: ['Showtime_ID']
+                    });
+                    if (bookingData) {
+                        showtimeId = bookingData.Showtime_ID;
+                    }
+                } catch (queryError) {
+                    console.error(`❌ [CANCEL_BOOKING] Lỗi khi query showtimeId:`, queryError);
+                }
+            }
+
+            console.log(`🔍 [CANCEL_BOOKING] Using showtimeId: ${showtimeId}`);
+
+            if (showtimeId) {
+                console.log(`🧹 [CANCEL_BOOKING] Clearing all seats for user ${userId} in showtime ${showtimeId}`);
+
+                // Clear tất cả ghế của user trong Redis
+                const clearResult = await seatSelectionService.clearAllUserSeats(showtimeId, userId);
+                console.log(`🧹 [CANCEL_BOOKING] Clear result:`, clearResult);
+
+                console.log(`🔄 [CANCEL_BOOKING] Broadcasting seat state update for showtime ${showtimeId}`);
+
+                // Lấy trạng thái ghế mới sau khi clear
+                const seats = await seatSelectionService.getShowtimeSeats(showtimeId);
+                const validSeats = Array.isArray(seats) ? seats : [];
+
+                // Broadcast đến tất cả clients trong room
+                const roomName = `showtime-${showtimeId}`;
+                const io = getIO();
+                io.to(roomName).emit('seats-state', validSeats);
+
+                console.log(`✅ [CANCEL_BOOKING] Cleared ${clearResult.clearedSeats?.length || 0} seats and broadcasted updated state to room ${roomName} (${validSeats.length} seats)`);
+            } else {
+                console.warn(`⚠️ [CANCEL_BOOKING] Không tìm thấy showtimeId để clear seats và broadcast`);
+            }
+        } catch (broadcastError) {
+            console.error(`❌ [CANCEL_BOOKING] Lỗi khi clear seats và broadcast:`, broadcastError);
+        }
+
+        // 5. Trả về kết quả
         return res.status(200).json({
             success: true,
             message: 'Hủy đơn đặt vé thành công',

@@ -3,7 +3,6 @@ const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
 const path = require('path');
 
-
 class CloudinaryService {
     constructor() {
         // Cấu hình Cloudinary
@@ -14,12 +13,10 @@ class CloudinaryService {
         });
     }
 
-
     async uploadPoster(file, folder = 'posters') {
         if (!file) {
             return null;
         }
-
 
         try {
             // Upload file lên Cloudinary
@@ -32,12 +29,10 @@ class CloudinaryService {
                 ]
             });
 
-
             // Xóa file tạm sau khi upload
             if (fs.existsSync(file.path)) {
                 fs.unlinkSync(file.path);
             }
-
 
             return result.secure_url;
         } catch (error) {
@@ -49,7 +44,6 @@ class CloudinaryService {
         }
     }
 
-
     async deleteImage(publicId) {
         try {
             const result = await cloudinary.uploader.destroy(publicId);
@@ -58,7 +52,6 @@ class CloudinaryService {
             throw new Error(`Lỗi xóa hình ảnh: ${error.message}`);
         }
     }
-
 
     // Lấy public_id từ URL
     getPublicIdFromUrl(url) {
@@ -72,8 +65,4 @@ class CloudinaryService {
     }
 }
 
-
 module.exports = new CloudinaryService();
-
-
-

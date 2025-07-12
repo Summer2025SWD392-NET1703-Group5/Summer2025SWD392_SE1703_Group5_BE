@@ -1,4 +1,6 @@
-// File: src/routes/payosRoutes.js
+/**
+ * Filesrc/routes/payosRoutes.js
+ */
 const express = require('express');
 const PayOSController = require('../controllers/payosController');
 const { authMiddleware } = require('../middlewares/authMiddleware');

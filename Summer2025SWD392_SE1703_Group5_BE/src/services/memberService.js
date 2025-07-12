@@ -1,3 +1,4 @@
+
 // services/memberService.js
 const { User, TicketBooking, Score, Promotion, PromotionUsage, UserPoints, sequelize } = require('../models');
 const logger = require('../utils/logger');
@@ -393,4 +394,3 @@ class MemberService {
 }
 
 module.exports = new MemberService();
-

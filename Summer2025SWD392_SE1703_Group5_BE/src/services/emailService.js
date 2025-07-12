@@ -1,4 +1,7 @@
 const nodemailer = require('nodemailer');
+const emailConfigService = require('../config/email');
+const pdfGenerator = require('../services/pdfGeneratorService');
+const logger = require('../utils/logger');
 
 /**
  * @class EmailService
@@ -34,23 +37,18 @@ class EmailService {
             throw new Error('EmailService: Cấu hình email không đầy đủ.');
         }
 
-        this._transporter = nodemailer.createTransport({
-            host: this._emailConfig.smtpServer,
-            port: parseInt(this._emailConfig.smtpPort, 10),
-            secure: this._emailConfig.enableSsl || false, // true for 465, false for other ports
-            auth: {
-                user: this._emailConfig.smtpUsername,
-                pass: this._emailConfig.smtpPassword,
-            },
-            // Ví dụ: để chấp nhận self-signed certificates (KHÔNG NÊN DÙNG TRONG PRODUCTION)
-            // tls: {
-            //     rejectUnauthorized: false
-            // }
-        });
+        // Sử dụng email config service thay vì tạo riêng transporter
 
         this._senderName = this._emailConfig.senderName || 'GALAXY Cinema';
         this._apiBaseUrl = this._emailConfig.apiBaseUrl || 'http://localhost:3000';
         this._supportPhone = this._emailConfig.supportPhone || '1900 xxxx';
+    }
+
+    /**
+     * Lấy transporter từ email config service
+     */
+    _getTransporter() {
+        return emailConfigService.get();
     }
 
     /**
@@ -84,10 +82,29 @@ class EmailService {
                 }));
             }
 
-            const info = await this._transporter.sendMail(mailOptions);
+            // Sử dụng transporter từ config service
+            const transporter = this._getTransporter();
+            const info = await transporter.sendMail(mailOptions);
             this._logger.info(`[EmailService] Email đã gửi thành công đến ${toEmail}. Message ID: ${info.messageId}. Số lượng tệp đính kèm: ${attachments?.length || 0}`);
             return true;
         } catch (error) {
+            // Kiểm tra nếu là lỗi authentication, reset transporter và thử lại
+            if (error.code === 'EAUTH' && error.responseCode === 535) {
+                this._logger.warn(`[EmailService] Authentication failed, resetting email transporter and retrying...`);
+                emailConfigService.reset();
+                
+                // Thử lại 1 lần với transporter mới
+                try {
+                    const newTransporter = this._getTransporter();
+                    const info = await newTransporter.sendMail(mailOptions);
+                    this._logger.info(`[EmailService] Email đã gửi thành công sau khi reset transporter đến ${toEmail}. Message ID: ${info.messageId}`);
+                    return true;
+                } catch (retryError) {
+                    this._logger.error(`[EmailService] Vẫn lỗi sau khi reset transporter: ${retryError.message}`, retryError);
+                    return false;
+                }
+            }
+            
             // Sử dụng this._logger.error(message, errorObject) để log cả error object
             this._logger.error(`[EmailService] Lỗi khi gửi email đến ${toEmail}: ${error.message}`, error);
             return false;
@@ -480,7 +497,7 @@ class EmailService {
      * @param {string} toEmail - Địa chỉ email người nhận.
      * @param {string} customerName - Tên khách hàng.
      * @param {object} bookingInfo - Thông tin đặt vé (ví dụ: { BookingId, MovieName, CinemaRoom, ShowDate, ShowTime, Seats }).
-     * @param {Array<object>} pdfTickets - Danh sách các vé dạng PDF. Mỗi object: { filename: string, content: Buffer, contentType: 'application/pdf' }.
+     * @param {Array<object>|object|null} pdfTickets - Danh sách các vé dạng PDF. Mỗi object: { filename: string, content: Buffer, contentType: 'application/pdf' }.
      * @returns {Promise<boolean>} True nếu gửi thành công, False nếu có lỗi.
      */
     async sendTicketsEmailAsync(
@@ -490,9 +507,13 @@ class EmailService {
         pdfTickets // Expected: [{ filename: 'Ve_GALAXY_Cinema_CODE.pdf', content: Buffer, contentType: 'application/pdf' }, ...]
     ) {
         try {
-            this._logger.info(`[EmailService] Chuẩn bị gửi email vé đến ${toEmail} cho booking ${bookingInfo.BookingId}`);
-
-            const subject = `Vé xem phim của bạn tại GALAXY Cinema - Mã đặt vé: ${bookingInfo.BookingId}`;
+            // Kiểm tra và log các giá trị đầu vào
+            this._logger.info(`[EmailService] Chuẩn bị gửi email vé đến ${toEmail}`);
+            
+            // Đảm bảo bookingInfo là object
+            const safeBookingInfo = bookingInfo || {};
+            
+            const subject = `Vé xem phim của bạn tại GALAXY Cinema - Mã đặt vé: ${safeBookingInfo.BookingId || 'N/A'}`;
             const body = `
             <html>
             <head>
@@ -511,16 +532,16 @@ class EmailService {
                         <h2>Vé xem phim của bạn - GALAXY Cinema</h2>
                     </div>
                     <div class='content'>
-                        <p>Xin chào <strong>${customerName}</strong>,</p>
+                        <p>Xin chào <strong>${customerName || 'Quý khách'}</strong>,</p>
                         <p>Cảm ơn bạn đã đặt vé tại GALAXY Cinema. Dưới đây là thông tin chi tiết về đặt vé của bạn:</p>
                         
                         <div class='ticket-info'>
-                            <p><strong>Mã đặt vé:</strong> ${bookingInfo.BookingId}</p>
-                            <p><strong>Phim:</strong> ${bookingInfo.MovieName}</p>
-                            <p><strong>Phòng chiếu:</strong> ${bookingInfo.CinemaRoom}</p>
-                            <p><strong>Ngày chiếu:</strong> ${bookingInfo.ShowDate}</p>
-                            <p><strong>Giờ chiếu:</strong> ${bookingInfo.ShowTime}</p>
-                            <p><strong>Ghế:</strong> ${bookingInfo.Seats}</p>
+                            <p><strong>Mã đặt vé:</strong> ${safeBookingInfo.BookingId || 'N/A'}</p>
+                            <p><strong>Phim:</strong> ${safeBookingInfo.MovieName || 'N/A'}</p>
+                            <p><strong>Phòng chiếu:</strong> ${safeBookingInfo.CinemaRoom || 'N/A'}</p>
+                            <p><strong>Ngày chiếu:</strong> ${safeBookingInfo.ShowDate || 'N/A'}</p>
+                            <p><strong>Giờ chiếu:</strong> ${safeBookingInfo.ShowTime || 'N/A'}</p>
+                            <p><strong>Ghế:</strong> ${safeBookingInfo.Seats || 'N/A'}</p>
                         </div>
                         
                         <p>Vé của bạn được đính kèm dưới dạng file PDF. Vui lòng mang theo vé (bản in hoặc trên điện thoại) khi đến rạp.</p>
@@ -530,22 +551,76 @@ class EmailService {
                     </div>
                     <div class='footer'>
                         <p>Đây là email tự động, vui lòng không trả lời email này.</p>
-                        <p>Nếu bạn cần hỗ trợ, vui lòng liên hệ với chúng tôi qua hotline: ${this._supportPhone}</p>
+                        <p>Nếu bạn cần hỗ trợ, vui lòng liên hệ với chúng tôi qua hotline: ${this._supportPhone || '1900 xxxx'}</p>
                     </div>
                 </div>
             </body>
             </html>`;
 
-            const attachments = pdfTickets.map(ticket => ({
-                filename: ticket.filename,
-                content: ticket.content,
-                contentType: ticket.contentType || 'application/pdf',
-            }));
+            // Đảm bảo pdfTickets là mảng và xử lý các trường hợp ngoại lệ
+            let ticketAttachments = [];
+            
+            // Xử lý trực tiếp không dùng map để tránh lỗi
+            if (pdfTickets) {
+                try {
+                    // Tối ưu kích thước file đính kèm nếu quá lớn
+                    const optimizeAttachment = (attachment) => {
+                        // Giới hạn kích thước tối đa là 5MB, nếu lớn hơn thì nén
+                        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+                        if (attachment.content && Buffer.isBuffer(attachment.content) && attachment.content.length > MAX_SIZE) {
+                            this._logger.info(`[EmailService] Tối ưu kích thước file đính kèm ${attachment.filename} từ ${Math.round(attachment.content.length/1024)}KB`);
+                            // Đối với PDF, chúng ta không thể nén dễ dàng mà không làm mất dữ liệu
+                            // Nhưng có thể giảm chất lượng trong tương lai nếu cần
+                            return attachment;
+                        }
+                        return attachment;
+                    };
+                    
+                    if (Array.isArray(pdfTickets)) {
+                        this._logger.info(`[EmailService] Đính kèm ${pdfTickets.length} vé PDF từ mảng`);
+                        // Giới hạn số lượng đính kèm tối đa là 9 file để tránh quá tải (8 vé + 1 hóa đơn)
+                        const MAX_ATTACHMENTS = 9;
+                        const attachmentsToProcess = pdfTickets.slice(0, MAX_ATTACHMENTS);
+                        
+                        for (let i = 0; i < attachmentsToProcess.length; i++) {
+                            const ticket = attachmentsToProcess[i];
+                            if (ticket && ticket.content) {
+                                const optimizedTicket = optimizeAttachment({
+                                    filename: ticket.filename || `Ve_GALAXY_Cinema_${i}.pdf`,
+                                    content: ticket.content,
+                                    contentType: ticket.contentType || 'application/pdf'
+                                });
+                                ticketAttachments.push(optimizedTicket);
+                            }
+                        }
+                        
+                        if (pdfTickets.length > MAX_ATTACHMENTS) {
+                            this._logger.warn(`[EmailService] Giới hạn số lượng đính kèm từ ${pdfTickets.length} xuống ${MAX_ATTACHMENTS}`);
+                        }
+                    } else if (typeof pdfTickets === 'object' && pdfTickets.content) {
+                        this._logger.info(`[EmailService] Đính kèm 1 vé PDF (object đơn lẻ)`);
+                        const optimizedTicket = optimizeAttachment({
+                            filename: pdfTickets.filename || 'Ve_GALAXY_Cinema.pdf',
+                            content: pdfTickets.content,
+                            contentType: pdfTickets.contentType || 'application/pdf'
+                        });
+                        ticketAttachments.push(optimizedTicket);
+                    } else {
+                        this._logger.warn(`[EmailService] pdfTickets không đúng định dạng (${typeof pdfTickets}), không thể đính kèm vé`);
+                    }
+                } catch (attachmentError) {
+                    this._logger.error(`[EmailService] Lỗi khi xử lý file đính kèm: ${attachmentError.message}`);
+                    // Tiếp tục gửi email mà không có đính kèm
+                    ticketAttachments = [];
+                }
+            } else {
+                this._logger.warn(`[EmailService] Không có pdfTickets để đính kèm`);
+            }
 
-            return await this.sendEmailAsync(toEmail, subject, body, attachments);
+            return await this.sendEmailAsync(toEmail, subject, body, ticketAttachments);
 
         } catch (error) {
-            this._logger.error(`[EmailService] Lỗi khi gửi email vé đến ${toEmail} cho booking ${bookingInfo?.BookingId}: ${error.message}`, error);
+            this._logger.error(`[EmailService] Lỗi khi gửi email vé đến ${toEmail}: ${error.message}`, error);
             return false;
         }
     }
@@ -652,6 +727,145 @@ class EmailService {
         } catch (error) {
             this._logger.error(`[EmailService] Lỗi khi gửi email xác nhận thay đổi mật khẩu đến ${email}: ${error.message}`, error);
             return false;
+        }
+    }
+
+    /**
+     * Gửi email thiết lập mật khẩu cho người dùng mới được tạo bởi Admin
+     */
+    async sendNewUserPasswordSetupEmailAsync(recipientEmail, recipientName, setupUrl, role) {
+        try {
+            const subject = 'Thiết lập mật khẩu cho tài khoản Galaxy Cinema mới của bạn';
+
+            const roleDisplay = {
+                'Admin': 'Quản trị viên',
+                'Staff': 'Nhân viên',
+                'Manager': 'Quản lý',
+                'Customer': 'Khách hàng'
+            }[role] || role;
+
+            const htmlContent = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e1e1e1; border-radius: 5px;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <img src="https://stp-cinema.vercel.app/imgs/logos/STPcinema.png" alt="Galaxy Cinema Logo" style="max-width: 150px;">
+                    </div>
+                    <h2 style="color: #4a4a4a; text-align: center;">Chào mừng đến với Galaxy Cinema</h2>
+                    <p>Xin chào ${recipientName},</p>
+                    <p>Tài khoản <strong>${roleDisplay}</strong> của bạn đã được tạo thành công trong hệ thống Galaxy Cinema.</p>
+                    <p>Để hoàn tất quá trình đăng ký và bắt đầu sử dụng tài khoản, vui lòng nhấp vào nút dưới đây để thiết lập mật khẩu:</p>
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${setupUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: bold;">Thiết lập mật khẩu</a>
+                    </div>
+                    <p>Hoặc bạn có thể sao chép và dán liên kết sau vào trình duyệt của mình:</p>
+                    <p style="background-color: #f5f5f5; padding: 10px; border-radius: 4px; word-break: break-all;">${setupUrl}</p>
+                    <p>Lưu ý: Liên kết này có hiệu lực trong 7 ngày. Nếu bạn không thiết lập mật khẩu trong thời gian này, vui lòng liên hệ với quản trị viên hệ thống.</p>
+                    <p>Nếu bạn không yêu cầu tạo tài khoản này, vui lòng bỏ qua email này hoặc liên hệ với chúng tôi ngay lập tức.</p>
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e1e1e1; color: #777; font-size: 12px;">
+                        <p>Email này được gửi tự động, vui lòng không trả lời.</p>
+                        <p>&copy; ${new Date().getFullYear()} Galaxy Cinema. Tất cả các quyền được bảo lưu.</p>
+                    </div>
+                </div>
+            `;
+
+            const result = await this.sendEmailAsync(recipientEmail, subject, htmlContent);
+            return result;
+        } catch (error) {
+            console.error('Error sending new user password setup email:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Gửi email xác nhận đặt vé
+     * @param {string} userEmail Email người dùng
+     * @param {string} userName Tên người dùng
+     * @param {Object} bookingDetails Chi tiết đặt vé
+     * @param {string} ticketHtml Mã HTML của vé
+     * @param {string} receiptHtml Mã HTML của hóa đơn
+     * @returns {Promise<Object>} Kết quả gửi email
+     */
+    async sendBookingConfirmationEmail(userEmail, userName, bookingDetails, ticketHtml, receiptHtml) {
+        try {
+            logger.info(`Chuẩn bị gửi email xác nhận đặt vé đến ${userEmail}`);
+            
+            // Tạo nội dung email
+            const emailContent = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <h1 style="color: #e50914;">GALAXY Cinema</h1>
+                        <p style="font-size: 18px;">Xác nhận đặt vé thành công</p>
+                    </div>
+                    
+                    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px;">
+                        <p>Xin chào <strong>${userName}</strong>,</p>
+                        <p>Cảm ơn bạn đã đặt vé tại GALAXY Cinema. Dưới đây là thông tin chi tiết về đơn đặt vé của bạn:</p>
+                        
+                        <ul style="list-style-type: none; padding-left: 0;">
+                            <li style="margin-bottom: 10px;"><strong>Mã đặt vé:</strong> ${bookingDetails.booking_id || 'N/A'}</li>
+                            <li style="margin-bottom: 10px;"><strong>Phim:</strong> ${bookingDetails.movie_name || 'N/A'}</li>
+                            <li style="margin-bottom: 10px;"><strong>Rạp:</strong> ${bookingDetails.cinema_name || 'N/A'}</li>
+                            <li style="margin-bottom: 10px;"><strong>Ngày chiếu:</strong> ${bookingDetails.show_date || 'N/A'}</li>
+                            <li style="margin-bottom: 10px;"><strong>Giờ chiếu:</strong> ${bookingDetails.show_time || 'N/A'}</li>
+                        </ul>
+                        
+                        <p>Vé của bạn được đính kèm dưới dạng file PDF. Vui lòng mang theo vé khi đến rạp.</p>
+                    </div>
+                    
+                    <div style="background-color: #fff3e0; padding: 15px; border-left: 4px solid #fdbb2d; margin-bottom: 20px;">
+                        <p style="margin: 0; font-weight: bold;">Lưu ý quan trọng:</p>
+                        <p style="margin: 5px 0 0 0;">Vui lòng đến trước giờ chiếu ít nhất 15 phút để hoàn tất thủ tục kiểm tra vé và vào phòng chiếu.</p>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; color: #666; font-size: 14px;">
+                        <p>Đây là email tự động, vui lòng không trả lời email này.</p>
+                        <p>Nếu bạn cần hỗ trợ, vui lòng liên hệ với chúng tôi qua hotline: 1900 xxxx</p>
+                        <p>&copy; ${new Date().getFullYear()} GALAXY Cinema. Tất cả quyền được bảo lưu.</p>
+                    </div>
+                </div>
+            `;
+
+            // Tạo đối tượng transporter
+            const transporter = nodemailer.createTransport({
+                host: config.host,
+                port: config.port,
+                secure: config.secure,
+                auth: {
+                    user: config.user,
+                    pass: config.password
+                }
+            });
+            
+            // Tạo các file PDF từ HTML
+            const ticketPdfBuffer = await pdfGenerator.generatePdfFromHtml(ticketHtml);
+            const receiptPdfBuffer = await pdfGenerator.generatePdfFromHtml(receiptHtml);
+
+            // Cấu hình email
+            const mailOptions = {
+                from: `"GALAXY Cinema" <${config.user}>`,
+                to: userEmail,
+                subject: 'Xác nhận đặt vé thành công - GALAXY Cinema',
+                html: emailContent,
+                attachments: [
+                    {
+                        filename: `Ve_GALAXY_Cinema_${bookingDetails.booking_id}.pdf`,
+                        content: ticketPdfBuffer,
+                        contentType: 'application/pdf'
+                    },
+                    {
+                        filename: `Hoa_Don_GALAXY_Cinema_${bookingDetails.booking_id}.pdf`,
+                        content: receiptPdfBuffer,
+                        contentType: 'application/pdf'
+                    }
+                ]
+            };
+
+            // Gửi email
+            const info = await transporter.sendMail(mailOptions);
+            logger.info(`Email xác nhận đặt vé đã được gửi đến ${userEmail}: ${info.messageId}`);
+            return { success: true, messageId: info.messageId };
+        } catch (error) {
+            logger.error(`Lỗi khi gửi email xác nhận đặt vé: ${error.message}`);
+            throw error;
         }
     }
 }
