@@ -402,6 +402,98 @@ class PromotionController {
             });
         }
     }
+
+    // 🔧 TEST: Method để test promotion expiration service
+    async testPromotionExpiration(req, res) {
+        try {
+            logger.info('Controller: Testing promotion expiration service');
+
+            // Import service
+            const promotionExpirationService = require('../services/promotionExpirationService');
+
+            // Chạy kiểm tra ngay lập tức
+            const result = await promotionExpirationService.executeCheck();
+
+            res.status(200).json({
+                success: true,
+                message: 'Đã chạy kiểm tra promotion expiration',
+                result: result
+            });
+
+        } catch (error) {
+            logger.error('Controller: Error in testPromotionExpiration', error);
+            res.status(500).json({
+                success: false,
+                message: 'Có lỗi xảy ra khi test promotion expiration',
+                error: error.message
+            });
+        }
+    }
+
+    // 🔧 FORCE: Method để force expire promotion hết hạn
+    async forceExpirePromotions(req, res) {
+        try {
+            logger.info('Controller: Force expiring promotions');
+
+            const { sequelize } = require('../models');
+
+            // Tìm tất cả promotion Active đã hết hạn
+            const [expiredPromotions] = await sequelize.query(`
+                SELECT
+                    p.Promotion_ID,
+                    p.Title,
+                    p.Promotion_Code,
+                    p.Status,
+                    p.End_Date,
+                    CAST(GETDATE() AS DATE) as CurrentDate,
+                    DATEDIFF(day, p.End_Date, CAST(GETDATE() AS DATE)) as DaysOverdue
+                FROM ksf00691_team03.Promotions p
+                WHERE p.Status = 'Active'
+                    AND CAST(p.End_Date AS DATE) < CAST(GETDATE() AS DATE)
+            `);
+
+            if (expiredPromotions.length === 0) {
+                return res.status(200).json({
+                    success: true,
+                    message: 'Không có promotion nào cần expire',
+                    expired_count: 0,
+                    promotions: []
+                });
+            }
+
+            // Force update tất cả promotion hết hạn
+            const [updateResult] = await sequelize.query(`
+                UPDATE ksf00691_team03.Promotions
+                SET Status = 'Expired', Updated_At = GETDATE()
+                WHERE Status = 'Active'
+                    AND CAST(End_Date AS DATE) < CAST(GETDATE() AS DATE);
+                SELECT @@ROWCOUNT as UpdatedRows;
+            `);
+
+            const updatedCount = updateResult[0]?.UpdatedRows || 0;
+
+            res.status(200).json({
+                success: true,
+                message: `Đã force expire ${updatedCount} promotion`,
+                expired_count: updatedCount,
+                promotions: expiredPromotions.map(p => ({
+                    id: p.Promotion_ID,
+                    code: p.Promotion_Code,
+                    title: p.Title,
+                    end_date: p.End_Date,
+                    days_overdue: p.DaysOverdue
+                }))
+            });
+
+        } catch (error) {
+            logger.error('Controller: Error in forceExpirePromotions', error);
+            res.status(500).json({
+                success: false,
+                message: 'Có lỗi xảy ra khi force expire promotions',
+                error: error.message
+            });
+        }
+    }
 }
 
 module.exports = new PromotionController();

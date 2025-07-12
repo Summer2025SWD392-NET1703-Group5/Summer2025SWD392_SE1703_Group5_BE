@@ -771,4 +771,88 @@ router.get('/staff/:id', authMiddleware, authorizeRoles('Admin', 'Manager'), use
  */
 router.get('/manager/:id', authMiddleware, authorizeRoles('Admin'), userController.getManagerDetailById);
 
+/**
+ * @swagger
+ * /api/user/check-staff-assignments:
+ *   get:
+ *     summary: Kiểm tra staff assignments và tìm staff được assign cho nhiều rạp
+ *     description: |
+ *       API này cho phép Admin kiểm tra tất cả staff assignments và phát hiện các trường hợp
+ *       staff được phân công cho nhiều rạp (vi phạm business rule).
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Kiểm tra thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 summary:
+ *                   type: object
+ *                   properties:
+ *                     total_staff_assigned:
+ *                       type: integer
+ *                     total_cinemas_with_staff:
+ *                       type: integer
+ *                     cinemas_with_multiple_staff:
+ *                       type: integer
+ *                 staff_assignments:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 potential_issues:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ */
+router.get('/check-staff-assignments', authMiddleware, authorizeRoles('Admin'), userController.checkStaffAssignments);
+
+/**
+ * @swagger
+ * /api/user/reassign-staff:
+ *   put:
+ *     summary: Reassign staff từ rạp cũ sang rạp mới
+ *     description: |
+ *       API này cho phép Admin chuyển staff từ rạp hiện tại sang rạp mới.
+ *       Sử dụng khi cần sửa lỗi staff được assign sai rạp.
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - staffId
+ *               - newCinemaId
+ *             properties:
+ *               staffId:
+ *                 type: integer
+ *                 description: ID của staff cần chuyển
+ *               newCinemaId:
+ *                 type: integer
+ *                 description: ID của rạp mới
+ *               force:
+ *                 type: boolean
+ *                 description: Có force chuyển không (mặc định false)
+ *                 default: false
+ *     responses:
+ *       200:
+ *         description: Chuyển staff thành công
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *       404:
+ *         description: Không tìm thấy staff hoặc rạp
+ */
+router.put('/reassign-staff', authMiddleware, authorizeRoles('Admin'), userController.reassignStaff);
+
 module.exports = router;

@@ -416,6 +416,28 @@ class UserController {
 
             // Xử lý cho Staff
             if (role === 'Staff') {
+                // 🔧 FIX: Kiểm tra staff đã được phân công cho rạp khác chưa
+                if (user.Cinema_ID && user.Cinema_ID !== cinemaId) {
+                    // Lấy thông tin rạp hiện tại của staff
+                    const currentCinema = await Cinema.findByPk(user.Cinema_ID);
+                    return res.status(400).json({
+                        success: false,
+                        message: `Nhân viên ${user.Full_Name} đã được phân công cho rạp ${currentCinema ? currentCinema.Cinema_Name : 'khác'}. Vui lòng hủy phân công hiện tại trước khi gán cho rạp mới.`,
+                        current_assignment: {
+                            Cinema_ID: user.Cinema_ID,
+                            Cinema_Name: currentCinema ? currentCinema.Cinema_Name : 'Không xác định'
+                        }
+                    });
+                }
+
+                // Kiểm tra staff đã được gán cho rạp này chưa
+                if (user.Cinema_ID === cinemaId) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Nhân viên ${user.Full_Name} đã được phân công cho rạp ${cinema.Cinema_Name} rồi.`
+                    });
+                }
+
                 // Cập nhật Cinema_ID cho Staff
                 await user.update({ Cinema_ID: cinemaId });
 
@@ -561,6 +583,28 @@ class UserController {
                 return res.status(404).json({
                     success: false,
                     message: 'Không tìm thấy rạp phim'
+                });
+            }
+
+            // 🔧 FIX: Kiểm tra staff đã được phân công cho rạp khác chưa
+            if (staffMember.Cinema_ID && staffMember.Cinema_ID !== cinemaId) {
+                // Lấy thông tin rạp hiện tại của staff
+                const currentCinema = await Cinema.findByPk(staffMember.Cinema_ID);
+                return res.status(400).json({
+                    success: false,
+                    message: `Nhân viên ${staffMember.Full_Name} đã được phân công cho rạp ${currentCinema ? currentCinema.Cinema_Name : 'khác'}. Vui lòng hủy phân công hiện tại trước khi gán cho rạp mới.`,
+                    current_assignment: {
+                        Cinema_ID: staffMember.Cinema_ID,
+                        Cinema_Name: currentCinema ? currentCinema.Cinema_Name : 'Không xác định'
+                    }
+                });
+            }
+
+            // Kiểm tra staff đã được gán cho rạp này chưa
+            if (staffMember.Cinema_ID === cinemaId) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Nhân viên ${staffMember.Full_Name} đã được phân công cho rạp ${cinema.Cinema_Name} rồi.`
                 });
             }
 
@@ -782,6 +826,181 @@ class UserController {
                 message: error.message.includes('Không tìm thấy')
                     ? error.message
                     : 'Đã xảy ra lỗi khi lấy thông tin quản lý',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Kiểm tra staff assignments và tìm staff được assign cho nhiều rạp
+     * @route GET /api/user/check-staff-assignments
+     * @access Admin
+     */
+    async checkStaffAssignments(req, res) {
+        try {
+            logger.info('Controller: Checking staff assignments for duplicates');
+
+            const { User, Cinema } = require('../models');
+
+            // Lấy tất cả staff có Cinema_ID
+            const staffWithAssignments = await User.findAll({
+                where: {
+                    Role: 'Staff',
+                    Cinema_ID: { [require('sequelize').Op.ne]: null }
+                },
+                include: [{
+                    model: Cinema,
+                    as: 'ManagedCinema',
+                    attributes: ['Cinema_ID', 'Cinema_Name', 'City']
+                }],
+                attributes: ['User_ID', 'Full_Name', 'Email', 'Cinema_ID', 'Role'],
+                order: [['Cinema_ID', 'ASC'], ['Full_Name', 'ASC']]
+            });
+
+            // Nhóm theo Cinema_ID để kiểm tra
+            const assignmentsByCinema = {};
+            const staffAssignments = [];
+
+            staffWithAssignments.forEach(staff => {
+                const cinemaId = staff.Cinema_ID;
+                if (!assignmentsByCinema[cinemaId]) {
+                    assignmentsByCinema[cinemaId] = [];
+                }
+                assignmentsByCinema[cinemaId].push(staff);
+
+                staffAssignments.push({
+                    User_ID: staff.User_ID,
+                    Full_Name: staff.Full_Name,
+                    Email: staff.Email,
+                    Cinema_ID: staff.Cinema_ID,
+                    Cinema_Name: staff.ManagedCinema ? staff.ManagedCinema.Cinema_Name : 'Không xác định',
+                    Cinema_City: staff.ManagedCinema ? staff.ManagedCinema.City : 'Không xác định'
+                });
+            });
+
+            // Thống kê
+            const totalStaffAssigned = staffWithAssignments.length;
+            const totalCinemasWithStaff = Object.keys(assignmentsByCinema).length;
+            const cinemasWithMultipleStaff = Object.entries(assignmentsByCinema)
+                .filter(([cinemaId, staffList]) => staffList.length > 1)
+                .map(([cinemaId, staffList]) => ({
+                    Cinema_ID: parseInt(cinemaId),
+                    Cinema_Name: staffList[0].ManagedCinema ? staffList[0].ManagedCinema.Cinema_Name : 'Không xác định',
+                    Staff_Count: staffList.length,
+                    Staff_List: staffList.map(s => ({
+                        User_ID: s.User_ID,
+                        Full_Name: s.Full_Name,
+                        Email: s.Email
+                    }))
+                }));
+
+            res.status(200).json({
+                success: true,
+                message: 'Đã kiểm tra staff assignments thành công',
+                summary: {
+                    total_staff_assigned: totalStaffAssigned,
+                    total_cinemas_with_staff: totalCinemasWithStaff,
+                    cinemas_with_multiple_staff: cinemasWithMultipleStaff.length
+                },
+                staff_assignments: staffAssignments,
+                potential_issues: cinemasWithMultipleStaff
+            });
+
+        } catch (error) {
+            logger.error('Error in checkStaffAssignments:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Đã xảy ra lỗi khi kiểm tra staff assignments',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Reassign staff từ rạp cũ sang rạp mới
+     * @route PUT /api/user/reassign-staff
+     * @access Admin
+     */
+    async reassignStaff(req, res) {
+        try {
+            const { staffId, newCinemaId, force = false } = req.body;
+
+            if (!staffId || !newCinemaId) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Vui lòng cung cấp staffId và newCinemaId'
+                });
+            }
+
+            const { User, Cinema } = require('../models');
+
+            // Kiểm tra staff có tồn tại không
+            const staff = await User.findByPk(staffId);
+            if (!staff) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Không tìm thấy staff'
+                });
+            }
+
+            if (staff.Role !== 'Staff') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Người dùng được chọn không phải là Staff'
+                });
+            }
+
+            // Kiểm tra rạp mới có tồn tại không
+            const newCinema = await Cinema.findByPk(newCinemaId);
+            if (!newCinema) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Không tìm thấy rạp phim mới'
+                });
+            }
+
+            // Lấy thông tin rạp cũ nếu có
+            let oldCinema = null;
+            if (staff.Cinema_ID) {
+                oldCinema = await Cinema.findByPk(staff.Cinema_ID);
+            }
+
+            // Nếu staff đã ở rạp này rồi
+            if (staff.Cinema_ID === newCinemaId) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Staff ${staff.Full_Name} đã được phân công cho rạp ${newCinema.Cinema_Name} rồi`
+                });
+            }
+
+            // Cập nhật Cinema_ID
+            await staff.update({ Cinema_ID: newCinemaId });
+
+            logger.info(`Reassigned Staff ${staff.Full_Name} from cinema ${oldCinema ? oldCinema.Cinema_Name : 'None'} to ${newCinema.Cinema_Name}`);
+
+            res.status(200).json({
+                success: true,
+                message: `Đã chuyển nhân viên ${staff.Full_Name} ${oldCinema ? `từ rạp ${oldCinema.Cinema_Name} ` : ''}sang rạp ${newCinema.Cinema_Name}`,
+                data: {
+                    User_ID: staff.User_ID,
+                    Full_Name: staff.Full_Name,
+                    Email: staff.Email,
+                    old_cinema: oldCinema ? {
+                        Cinema_ID: oldCinema.Cinema_ID,
+                        Cinema_Name: oldCinema.Cinema_Name
+                    } : null,
+                    new_cinema: {
+                        Cinema_ID: newCinema.Cinema_ID,
+                        Cinema_Name: newCinema.Cinema_Name
+                    }
+                }
+            });
+
+        } catch (error) {
+            logger.error('Error in reassignStaff:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Đã xảy ra lỗi khi chuyển staff sang rạp mới',
                 error: error.message
             });
         }
