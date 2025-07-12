@@ -24,11 +24,11 @@ module.exports = (sequelize, DataTypes) => {
     Date: {
       type: DataTypes.DATE,
       allowNull: false,
+      defaultValue: sequelize.literal('GETDATE()')
     },
-    Date: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: sequelize.literal('GETDATE()')  // ← THÊM DÒNG NÀY
+    Status: {
+      type: DataTypes.STRING,
+      allowNull: true
     },
     Notes: {
       type: DataTypes.STRING,
@@ -41,7 +41,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'BookingHistory',
     tableName: 'Booking_History',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return BookingHistory;

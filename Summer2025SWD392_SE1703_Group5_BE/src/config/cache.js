@@ -1,54 +1,131 @@
 // File: src/config/cache.js
-// Mô tả: Cấu hình và cung cấp một instance của NodeCache để sử dụng trong ứng dụng (in-memory cache).
+// Mô tả: Cấu hình cache thống nhất - hỗ trợ cả Redis và Memory Cache
 
 const NodeCache = require('node-cache'); // Import thư viện NodeCache.
+const { getRedisInstance } = require('./redisCache'); // Import Redis cache
 
-let cacheInstance = null; // Biến để lưu trữ instance của NodeCache (Singleton pattern).
+let cacheInstance = null; // Biến để lưu trữ instance cache (Singleton pattern).
+let useRedis = false; // Flag để xác định sử dụng Redis hay Memory Cache
 
 /**
- * Hàm để lấy (hoặc tạo nếu chưa có) instance của NodeCache.
- * Sử dụng Singleton pattern để đảm bảo chỉ có một instance cache được tạo ra.
- * @returns {NodeCache} Instance của NodeCache.
+ * Khởi tạo cache service - Redis hoặc Memory Cache
  */
-function getCacheInstance() {
-    // Chỉ tạo mới instance cache nếu nó chưa được khởi tạo.
-    if (!cacheInstance) {
-        console.log('[cache.js] Creating new NodeCache instance...');
+async function initializeCache() {
+    const shouldUseRedis = process.env.USE_REDIS === 'true';
 
-        // Cấu hình NodeCache.
-        cacheInstance = new NodeCache({
-            // stdTTL: Thời gian sống mặc định (Time To Live) cho mỗi cache item, tính bằng giây.
-            // Ở đây là 86400 giây = 24 giờ.
-            // Nếu một item được thêm vào cache mà không có TTL cụ thể, nó sẽ hết hạn sau khoảng thời gian này.
-            stdTTL: 86400, // 24 hours
+    if (shouldUseRedis) {
+        console.log('[cache.js] 🔄 Đang khởi tạo Redis cache...');
+        const redisInstance = getRedisInstance();
+        const connected = await redisInstance.connect();
 
-            // checkperiod: Khoảng thời gian (tính bằng giây) mà cache sẽ tự động kiểm tra và xóa các item đã hết hạn.
-            // Ở đây là 600 giây = 10 phút.
-            // Việc này giúp giải phóng bộ nhớ và đảm bảo cache không chứa dữ liệu cũ quá lâu.
-            checkperiod: 600, // Check for expired items every 10 minutes
-
-            // (Tùy chọn) Các cấu hình khác:
-            // useClones: false, // Mặc định là true. Nếu false, cache sẽ trả về tham chiếu trực tiếp đến object đã lưu,
-            // giúp tăng tốc độ nhưng có thể gây ra thay đổi không mong muốn nếu object được sửa đổi bên ngoài cache.
-            // deleteOnExpire: true, // Mặc định là true. Tự động xóa item khi hết hạn.
-        });
-
-        console.log('[cache.js] NodeCache instance created with stdTTL: 24 hours, checkperiod: 10 minutes.');
-
-        // (Tùy chọn) Lắng nghe các sự kiện của cache để log hoặc xử lý.
-        // cacheInstance.on('set', (key, value) => {
-        //     console.log(`[cache.js] Key set: ${key}` /*, value */ ); // Tránh log value nếu nó quá lớn hoặc nhạy cảm.
-        // });
-        // cacheInstance.on('expired', (key, value) => {
-        //     console.log(`[cache.js] Key expired and deleted: ${key}`);
-        // });
-        // cacheInstance.on('del', (key, value) => {
-        //     console.log(`[cache.js] Key deleted: ${key}`);
-        // });
+        if (connected) {
+            console.log('[cache.js] ✅ Sử dụng Redis cache');
+            cacheInstance = redisInstance;
+            useRedis = true;
+            return cacheInstance;
+        } else {
+            console.log('[cache.js] ⚠️ Redis kết nối thất bại, fallback sang Memory cache');
+        }
     }
-    return cacheInstance; // Trả về instance cache đã có hoặc vừa tạo.
+
+    // Fallback hoặc sử dụng Memory Cache
+    console.log('[cache.js] 🔄 Đang khởi tạo Memory cache...');
+    cacheInstance = new NodeCache({
+        stdTTL: 86400, // 24 hours
+        checkperiod: 600, // Check for expired items every 10 minutes
+    });
+    useRedis = false;
+    console.log('[cache.js] ✅ Sử dụng Memory cache (NodeCache)');
+    return cacheInstance;
 }
 
-// Export hàm getCacheInstance để các module khác có thể lấy instance cache.
-// Sử dụng object với key `get` để có thể gọi `require('./cache').get()`.
-module.exports = { get: getCacheInstance };
+/**
+ * Lấy instance cache (Redis hoặc Memory)
+ */
+async function getCacheInstance() {
+    if (!cacheInstance) {
+        await initializeCache();
+    }
+    return cacheInstance;
+}
+
+/**
+ * Wrapper methods để thống nhất API giữa Redis và Memory Cache
+ */
+const CacheService = {
+    async get(key) {
+        const cache = await getCacheInstance();
+        if (useRedis) {
+            return await cache.get(key);
+        } else {
+            return cache.get(key) || null;
+        }
+    },
+
+    async set(key, value, ttl = 86400) {
+        const cache = await getCacheInstance();
+        if (useRedis) {
+            return await cache.set(key, value, ttl);
+        } else {
+            return cache.set(key, value, ttl);
+        }
+    },
+
+    async del(key) {
+        const cache = await getCacheInstance();
+        if (useRedis) {
+            return await cache.del(key);
+        } else {
+            return cache.del(key);
+        }
+    },
+
+    async flushAll() {
+        const cache = await getCacheInstance();
+        if (useRedis) {
+            return await cache.flushAll();
+        } else {
+            cache.flushAll();
+            return true;
+        }
+    },
+
+    async exists(key) {
+        const cache = await getCacheInstance();
+        if (useRedis) {
+            return await cache.exists(key);
+        } else {
+            return cache.has(key);
+        }
+    },
+
+    isRedis() {
+        return useRedis;
+    },
+
+    async getStats() {
+        const cache = await getCacheInstance();
+        if (useRedis) {
+            return await cache.getInfo();
+        } else {
+            return {
+                connected: true,
+                type: 'memory',
+                keys: cache.keys().length,
+                stats: cache.getStats()
+            };
+        }
+    },
+
+    // Thêm method để lấy cache instance trực tiếp
+    async getCacheInstance() {
+        return await getCacheInstance();
+    }
+};
+
+// Export các functions và CacheService
+module.exports = {
+    get: getCacheInstance,
+    CacheService,
+    initializeCache
+};
