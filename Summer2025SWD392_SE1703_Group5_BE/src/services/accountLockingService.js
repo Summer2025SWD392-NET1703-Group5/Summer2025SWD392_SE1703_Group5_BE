@@ -1,8 +1,8 @@
 // File: src/services/accountLockingService.js
 // Mô tả: Lớp AccountLockingService quản lý logic khóa tài khoản tạm thời sau nhiều lần đăng nhập thất bại.
 
-// FIX: Lấy cache instance đúng cách
-const cache = require('../config/cache').get(); // Gọi get() để lấy NodeCache instance
+// FIX: Sử dụng CacheService thống nhất
+const { CacheService } = require('../config/cache');
 const logger = require('../utils/logger'); // Sửa đường dẫn đến logger
 
 /**
@@ -27,13 +27,13 @@ class AccountLockingService {
      */
     async isAccountLocked(email) {
         const lockKey = `lock_${email}`; // Key trong cache để lưu trạng thái khóa
-        const isLocked = cache.get(lockKey);
+        const isLocked = await CacheService.get(lockKey);
         logger.info(`[AccountLockingService.isAccountLocked] Kiểm tra khóa cho ${email}. Key: ${lockKey}, Trạng thái khóa từ cache: ${isLocked}`);
 
         if (isLocked) {
             // Nếu tài khoản bị khóa, kiểm tra xem thời gian khóa đã hết chưa
             const expiryKey = `lock_expiry_timestamp_${email}`; // Key lưu thời điểm hết hạn khóa (timestamp)
-            const expiryTimestamp = cache.get(expiryKey);
+            const expiryTimestamp = await CacheService.get(expiryKey);
             logger.info(`[AccountLockingService.isAccountLocked] Lấy thời điểm hết hạn khóa cho ${email}. Key: ${expiryKey}, Timestamp: ${expiryTimestamp}`);
 
             if (expiryTimestamp && Date.now() < expiryTimestamp) {
@@ -58,7 +58,7 @@ class AccountLockingService {
      */
     async getFailedAttempts(email) {
         const attemptsKey = `failed_login_attempts_${email}`; // Key lưu số lần thử sai
-        const attempts = cache.get(attemptsKey) || 0;
+        const attempts = (await CacheService.get(attemptsKey)) || 0;
         logger.info(`[AccountLockingService.getFailedAttempts] Lấy số lần thử sai cho ${email}. Key: ${attemptsKey}, Số lần thử từ cache: ${attempts}`);
         return attempts;
     }
@@ -70,7 +70,7 @@ class AccountLockingService {
      */
     async getRemainingLockTime(email) {
         const lockKey = `lock_${email}`;
-        const isLockedStatus = cache.get(lockKey);
+        const isLockedStatus = await CacheService.get(lockKey);
         logger.info(`[AccountLockingService.getRemainingLockTime] Kiểm tra trạng thái khóa (chỉ cờ) cho ${email}. Key: ${lockKey}, Trạng thái: ${isLockedStatus}`);
 
         if (!isLockedStatus) {
@@ -78,7 +78,7 @@ class AccountLockingService {
         }
 
         const expiryKey = `lock_expiry_timestamp_${email}`;
-        const expiryTimestamp = cache.get(expiryKey);
+        const expiryTimestamp = await CacheService.get(expiryKey);
         logger.info(`[AccountLockingService.getRemainingLockTime] Lấy thời điểm hết hạn khóa cho ${email}. Key: ${expiryKey}, Timestamp: ${expiryTimestamp}`);
 
         if (!expiryTimestamp || Date.now() >= expiryTimestamp) {
@@ -106,7 +106,7 @@ class AccountLockingService {
         let attempts = currentAttemptsBeforeIncrement + 1;
 
         const attemptTTLSeconds = 24 * 60 * 60; // 24 giờ
-        cache.set(attemptsKey, attempts, attemptTTLSeconds);
+        await CacheService.set(attemptsKey, attempts, attemptTTLSeconds);
         logger.info(`[AccountLockingService.recordFailedAttempt] Đã ghi nhận lần thử ${attempts} cho ${email}. Key: ${attemptsKey}, TTL: ${attemptTTLSeconds}s`);
 
         console.log(`[AccountLockingService] Failed login attempt ${attempts} for account ${email}`);
@@ -118,8 +118,8 @@ class AccountLockingService {
 
             // Đặt cờ khóa và thời điểm hết hạn vào cache
             // Thời gian sống của các key này bằng thời gian khóa
-            cache.set(lockKey, true, this.LOCK_TIME * 60); // lock_time tính bằng giây cho cache
-            cache.set(expiryKey, expiryTimestamp, this.LOCK_TIME * 60);
+            await CacheService.set(lockKey, true, this.LOCK_TIME * 60); // lock_time tính bằng giây cho cache
+            await CacheService.set(expiryKey, expiryTimestamp, this.LOCK_TIME * 60);
             logger.info(`[AccountLockingService.recordFailedAttempt] Đã khóa tài khoản ${email}. Key khóa: ${lockKey}, Key hết hạn: ${expiryKey}, Thời gian khóa: ${this.LOCK_TIME} phút`);
 
             console.log(`[AccountLockingService] Account ${email} has been locked for ${this.LOCK_TIME} minutes.`);
@@ -136,7 +136,7 @@ class AccountLockingService {
      */
     async resetFailedAttempts(email) {
         const attemptsKey = `failed_login_attempts_${email}`;
-        cache.del(attemptsKey);
+        await CacheService.del(attemptsKey);
         logger.info(`[AccountLockingService.resetFailedAttempts] Đã xóa số lần thử sai cho ${email}. Key: ${attemptsKey}`);
         console.log(`[AccountLockingService] Reset failed login attempts for account ${email}`);
     }
@@ -152,9 +152,9 @@ class AccountLockingService {
         const lockKey = `lock_${email}`;
         const expiryKey = `lock_expiry_timestamp_${email}`;
 
-        cache.del(attemptsKey);
-        cache.del(lockKey);
-        cache.del(expiryKey);
+        await CacheService.del(attemptsKey);
+        await CacheService.del(lockKey);
+        await CacheService.del(expiryKey);
         logger.info(`[AccountLockingService.unlockAccount] Đã mở khóa tài khoản ${email}. Đã xóa keys: ${attemptsKey}, ${lockKey}, ${expiryKey}`);
 
         console.log(`[AccountLockingService] Account ${email} has been unlocked.`);
