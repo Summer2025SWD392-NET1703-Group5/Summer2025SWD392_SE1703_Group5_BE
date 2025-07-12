@@ -5,6 +5,28 @@ const { Op, Transaction } = require('sequelize');
 class SeatLayoutService {
 
     /**
+     * Helper: Chuẩn hóa loại ghế từ các định dạng khác nhau về định dạng chuẩn
+     */
+    normalizeSeatType(seatType) {
+        const seatTypeMapping = {
+            'Regular': 'Thường',
+            'Standard': 'Thường',
+            'Normal': 'Thường',
+            'Thường': 'Thường',
+            'VIP': 'VIP',
+            'Premium': 'VIP'
+        };
+
+        const normalizedSeatType = seatTypeMapping[seatType];
+        if (!normalizedSeatType) {
+            const validInputTypes = Object.keys(seatTypeMapping);
+            throw new Error(`Loại ghế '${seatType}' không hợp lệ. Các giá trị hợp lệ: ${validInputTypes.join(', ')}`);
+        }
+
+        return normalizedSeatType;
+    }
+
+    /**
      * Lấy sơ đồ ghế của phòng chiếu
      */
     async getSeatLayout(roomId) {
@@ -98,6 +120,138 @@ class SeatLayoutService {
             },
             can_modify: usedLayoutIds.length === 0
         };
+    }
+
+    /**
+     * Cấu hình sơ đồ ghế cho phòng chiếu
+     */
+    async configureSeatLayout(roomId, model) {
+        const transaction = await sequelize.transaction();
+
+        // Import Op trực tiếp
+        const { Op } = require('sequelize');
+
+        try {
+            // Kiểm tra phòng chiếu
+            const cinemaRoom = await CinemaRoom.findByPk(roomId, { transaction });
+            if (!cinemaRoom) {
+                throw new Error(`Không tìm thấy phòng chiếu có ID ${roomId}`);
+            }
+
+            // Kiểm tra sức chứa tối đa của phòng
+            const maxCapacity = cinemaRoom.Max_Capacity || 150; // Nếu không có cấu hình sức chứa tối đa, lấy giá trị mặc định là 150
+
+            // Tính tổng số ghế hiện có của phòng (không tính những ghế đang cấu hình lại)
+            const currentActiveSeats = await SeatLayout.count({
+                where: {
+                    Cinema_Room_ID: roomId,
+                    Is_Active: true,
+                    Row_Label: { [Op.notIn]: model.Rows.map(r => r.RowLabel) }
+                },
+                transaction
+            });
+
+            // Tính tổng số ghế
+            let totalSeats = 0;
+            for (const row of model.Rows) {
+                totalSeats += model.ColumnsPerRow - (row.EmptyColumns?.length || 0);
+            }
+
+            // Kiểm tra tổng số ghế sau khi cộng thêm ghế mới
+            const totalSeatsAfterAddition = currentActiveSeats + totalSeats;
+            if (totalSeatsAfterAddition > maxCapacity) {
+                throw new Error(`Không thể thêm ${totalSeats} ghế mới. Phòng chỉ có thể chứa tối đa ${maxCapacity} ghế, hiện đã có ${currentActiveSeats} ghế. Vui lòng giảm số lượng ghế.`);
+            }
+
+            if (totalSeats < 20 || totalSeats > 150) {
+                throw new Error(`Số lượng ghế phải từ 20 đến 150 (hiện tại: ${totalSeats})`);
+            }
+
+            // Kiểm tra có booking pending không
+            if (await this.hasPendingBookingsForRoom(roomId)) {
+                throw new Error('Không thể cập nhật layout ghế vì có đơn đặt vé đang chờ thanh toán');
+            }
+
+            // Kiểm tra phòng có showtime không
+            const hasShowtimes = await Showtime.findOne({
+                where: {
+                    Cinema_Room_ID: roomId,
+                    Show_Date: { [Op.gte]: new Date() },
+                    Status: { [Op.ne]: 'Hidden' }
+                },
+                transaction
+            });
+
+            if (hasShowtimes) {
+                throw new Error('Không thể thay đổi sơ đồ ghế vì phòng đã có lịch chiếu');
+            }
+
+            // Lấy danh sách row labels từ input
+            const newRowLabels = model.Rows.map(r => r.RowLabel);
+
+            // Xóa các layout ghế đang được cấu hình lại
+            await SeatLayout.destroy({
+                where: {
+                    Cinema_Room_ID: roomId,
+                    Row_Label: { [Op.in]: newRowLabels }
+                },
+                transaction
+            });
+
+            // Thêm các layout mới
+            const newLayouts = [];
+            for (const rowConfig of model.Rows) {
+                for (let col = 1; col <= model.ColumnsPerRow; col++) {
+                    if (!rowConfig.EmptyColumns?.includes(col)) {
+                        newLayouts.push({
+                            Cinema_Room_ID: roomId,
+                            Row_Label: rowConfig.RowLabel,
+                            Column_Number: col,
+                            Seat_Type: rowConfig.SeatType,
+                            Is_Active: true
+                        });
+                    }
+                }
+            }
+
+            await SeatLayout.bulkCreate(newLayouts, { transaction });
+
+            // Cập nhật tổng số ghế trong phòng
+            await cinemaRoom.update({ Seat_Quantity: newLayouts.length }, { transaction });
+
+            await transaction.commit();
+
+            // Trả về kết quả
+            const totalRows = await SeatLayout.count({
+                where: { Cinema_Room_ID: roomId },
+                distinct: true,
+                col: 'Row_Label'
+            });
+
+            const seatTypeStats = await SeatLayout.findAll({
+                where: { Cinema_Room_ID: roomId },
+                attributes: [
+                    'Seat_Type',
+                    [sequelize.fn('COUNT', sequelize.col('Layout_ID')), 'count']
+                ],
+                group: ['Seat_Type']
+            });
+
+            return {
+                id: require('crypto').randomUUID(),
+                cinema_room_id: roomId,
+                total_rows: totalRows,
+                total_seats: newLayouts.length,
+                seat_types: seatTypeStats.map(st => ({
+                    type: st.Seat_Type,
+                    count: parseInt(st.dataValues.count)
+                }))
+            };
+
+        } catch (error) {
+            await transaction.rollback();
+            throw error;
+        }
     }
 
     /**
@@ -381,6 +535,36 @@ class SeatLayoutService {
     }
 
     /**
+     * Cập nhật loại ghế
+     */
+    async updateSeatType(layoutId, model) {
+        const seatLayout = await SeatLayout.findByPk(layoutId);
+        if (!seatLayout) {
+            throw new Error(`Không tìm thấy ghế có ID ${layoutId}`);
+        }
+
+        // Kiểm tra có booking pending không
+        if (await this.hasPendingBookingsForLayouts([layoutId])) {
+            throw new Error('Không thể cập nhật loại ghế vì có đơn đặt vé đang chờ thanh toán');
+        }
+
+        seatLayout.Seat_Type = model.SeatType;
+        if (model.IsActive !== undefined) {
+            seatLayout.Is_Active = model.IsActive;
+        }
+
+        await seatLayout.save();
+
+        return {
+            layout_id: seatLayout.Layout_ID,
+            row_label: seatLayout.Row_Label,
+            column_number: seatLayout.Column_Number,
+            seat_type: seatLayout.Seat_Type,
+            is_active: seatLayout.Is_Active
+        };
+    }
+
+    /**
      * Cập nhật hàng loạt loại ghế
      */
     async bulkUpdateSeatTypes(model, sequelize) {
@@ -390,6 +574,22 @@ class SeatLayoutService {
 
         // Import Op trực tiếp
         const { Op } = require('sequelize');
+
+        // ✅ Chuẩn hóa loại ghế
+        const seatTypeMapping = {
+            'Regular': 'Thường',
+            'Standard': 'Thường',
+            'Normal': 'Thường',
+            'Thường': 'Thường',
+            'VIP': 'VIP',
+            'Premium': 'VIP'
+        };
+
+        const normalizedSeatType = seatTypeMapping[model.SeatType];
+        if (!normalizedSeatType) {
+            const validInputTypes = Object.keys(seatTypeMapping);
+            throw new Error(`Loại ghế '${model.SeatType}' không hợp lệ. Các giá trị hợp lệ: ${validInputTypes.join(', ')}`);
+        }
 
         // Kiểm tra có booking pending không
         if (await this.hasPendingBookingsForLayouts(model.LayoutIds, sequelize)) {
@@ -404,8 +604,8 @@ class SeatLayoutService {
             throw new Error('Không tìm thấy ghế nào cần cập nhật');
         }
 
-        // Cập nhật
-        const updateData = { Seat_Type: model.SeatType };
+        // Cập nhật với loại ghế đã chuẩn hóa
+        const updateData = { Seat_Type: normalizedSeatType };
         if (model.IsActive !== undefined) {
             updateData.Is_Active = model.IsActive;
         }
@@ -416,7 +616,7 @@ class SeatLayoutService {
 
         return {
             UpdatedCount: seatLayouts.length,
-            SeatType: model.SeatType,
+            SeatType: normalizedSeatType, // ✅ Trả về loại ghế đã chuẩn hóa
             IsActive: model.IsActive
         };
     }
@@ -483,13 +683,18 @@ class SeatLayoutService {
     }
 
     /**
-     * Xóa mềm layout ghế
+     * Toggle visibility (ẩn/hiện) hàng loạt layout ghế
+     * Tái sử dụng logic từ bulk-delete nhưng cho phép set Is_Active = true hoặc false
      */
-    async softDeleteSeatLayouts(model, sequelize) {
+    async toggleSeatLayoutsVisibility(model, sequelize) {
         if (!model.LayoutIds || model.LayoutIds.length === 0) {
-            throw new Error('Danh sách ghế cần xóa không được trống');
+            throw new Error('Danh sách ghế cần thay đổi không được trống');
         }
 
+        // Kiểm tra IsActive có được cung cấp không
+        if (model.IsActive === undefined || model.IsActive === null) {
+            throw new Error('Trạng thái Is_Active phải được chỉ định (true hoặc false)');
+        }
 
         // Nếu không có sequelize được truyền vào, lấy từ models
         if (!sequelize) {
@@ -497,106 +702,81 @@ class SeatLayoutService {
             sequelize = seq;
         }
 
-
         // Import Op trực tiếp
         const { Op } = require('sequelize');
 
-
-        // Kiểm tra có booking pending không
-        if (await this.hasPendingBookingsForLayouts(model.LayoutIds, sequelize)) {
-            return {
-                success: false,
-                message: 'Không thể xóa ghế vì có đơn đặt vé đang chờ thanh toán',
-                error_code: 'PENDING_BOOKINGS'
-            };
-        }
-
-
-        // Kiểm tra ghế có đang được sử dụng không
-        const usedLayoutIds = [];
-
-
-        try {
-            // Lấy tất cả Seat có Layout_ID trong model.LayoutIds
-            const seats = await Seat.findAll({
-                where: {
-                    Layout_ID: { [Op.in]: model.LayoutIds }
-                },
-                attributes: ['Seat_ID', 'Layout_ID']
-            });
-
-
-            if (seats.length > 0) {
-                // Lấy tất cả Seat_ID
-                const seatIds = seats.map(seat => seat.Seat_ID);
-
-
-                // Lập map từ Seat_ID đến Layout_ID
-                const seatToLayoutMap = {};
-                seats.forEach(seat => {
-                    seatToLayoutMap[seat.Seat_ID] = seat.Layout_ID;
-                });
-
-
-                // Kiểm tra các ghế có được sử dụng trong vé không
-                const usedSeats = await Ticket.findAll({
-                    where: {
-                        Seat_ID: { [Op.in]: seatIds },
-                        Status: { [Op.notIn]: ['Cancelled', 'Expired'] }
-                    },
-                    attributes: ['Seat_ID']
-                });
-
-
-                // Lấy Layout_ID của các ghế đã được sử dụng
-                usedSeats.forEach(ticket => {
-                    const layoutId = seatToLayoutMap[ticket.Seat_ID];
-                    if (layoutId && !usedLayoutIds.includes(layoutId)) {
-                        usedLayoutIds.push(layoutId);
-                    }
-                });
+        // Nếu đang ẩn ghế (set Is_Active = false), kiểm tra có booking pending không
+        if (model.IsActive === false) {
+            if (await this.hasPendingBookingsForLayouts(model.LayoutIds, sequelize)) {
+                return {
+                    success: false,
+                    message: 'Không thể ẩn ghế vì có đơn đặt vé đang chờ thanh toán',
+                    error_code: 'PENDING_BOOKINGS'
+                };
             }
-        } catch (error) {
-            console.error('Lỗi khi kiểm tra ghế đang sử dụng:', error);
+
+            // Kiểm tra ghế có đang được sử dụng không
+            const usedLayoutIds = [];
+            const checkUsageQuery = `
+                SELECT DISTINCT sl.Layout_ID
+                FROM [ksf00691_team03].[Seat_Layout] sl
+                INNER JOIN [ksf00691_team03].[Seats] s ON sl.Layout_ID = s.Layout_ID
+                INNER JOIN [ksf00691_team03].[Tickets] t ON s.Seat_ID = t.Seat_ID
+                INNER JOIN [ksf00691_team03].[Ticket_Bookings] tb ON t.Booking_ID = tb.Booking_ID
+                WHERE sl.Layout_ID IN (${model.LayoutIds.map(() => '?').join(',')})
+                AND tb.Status IN ('Confirmed', 'Completed')
+            `;
+
+            try {
+                const [usageResults] = await sequelize.query(checkUsageQuery, {
+                    replacements: model.LayoutIds,
+                    type: sequelize.QueryTypes.SELECT
+                });
+
+                if (usageResults && usageResults.length > 0) {
+                    usageResults.forEach(row => {
+                        if (row.Layout_ID && !usedLayoutIds.includes(row.Layout_ID)) {
+                            usedLayoutIds.push(row.Layout_ID);
+                        }
+                    });
+                }
+            } catch (queryError) {
+                console.warn('Không thể kiểm tra usage, tiếp tục với việc ẩn ghế:', queryError.message);
+            }
+
+            if (usedLayoutIds.length > 0) {
+                return {
+                    success: false,
+                    message: `Không thể ẩn ghế vì có ${usedLayoutIds.length} ghế đã được sử dụng trong các đơn đặt vé đã xác nhận`,
+                    error_code: 'SEATS_IN_USE',
+                    used_layout_ids: usedLayoutIds
+                };
+            }
         }
-
-
-        if (usedLayoutIds.length > 0) {
-            return {
-                success: false,
-                message: 'Một số layout ghế đã được sử dụng trong đặt vé và không thể xóa',
-                used_layouts: usedLayoutIds
-            };
-        }
-
 
         const transaction = await sequelize.transaction();
 
-
         try {
-            // Lấy các SeatLayout cần xóa mềm
+            // Lấy các SeatLayout cần thay đổi
             const seatLayouts = await SeatLayout.findAll({
                 where: { Layout_ID: { [Op.in]: model.LayoutIds } },
                 transaction
             });
 
-
             if (seatLayouts.length === 0) {
-                throw new Error('Không tìm thấy layout ghế nào cần xóa');
+                throw new Error('Không tìm thấy layout ghế nào cần thay đổi');
             }
 
-
-            // Cập nhật is_active = false thay vì xóa cứng
+            // Cập nhật Is_Active theo yêu cầu
             await SeatLayout.update(
-                { Is_Active: false },
+                { Is_Active: model.IsActive },
                 {
                     where: { Layout_ID: { [Op.in]: model.LayoutIds } },
                     transaction
                 }
             );
 
-
-            // Cập nhật tổng số ghế trong phòng
+            // Cập nhật tổng số ghế active trong phòng
             if (seatLayouts.length > 0) {
                 const roomId = seatLayouts[0].Cinema_Room_ID;
                 const activeSeatCount = await SeatLayout.count({
@@ -607,28 +787,22 @@ class SeatLayoutService {
                     transaction
                 });
 
-
                 await CinemaRoom.update(
                     { Seat_Quantity: activeSeatCount },
                     { where: { Cinema_Room_ID: roomId }, transaction }
                 );
             }
 
-
             await transaction.commit();
 
-
+            const actionText = model.IsActive ? 'hiện' : 'ẩn';
             return {
                 success: true,
-                message: `Đã xóa mềm ${seatLayouts.length} layout ghế thành công`,
-                deleted_count: seatLayouts.length,
-                deleted_layouts: seatLayouts.map(sl => ({
-                    layout_id: sl.Layout_ID,
-                    row_label: sl.Row_Label,
-                    column_number: sl.Column_Number
-                }))
+                message: `Đã ${actionText} thành công ${seatLayouts.length} ghế`,
+                affected_count: seatLayouts.length,
+                is_active: model.IsActive,
+                room_id: seatLayouts[0]?.Cinema_Room_ID
             };
-
 
         } catch (error) {
             await transaction.rollback();
@@ -636,6 +810,306 @@ class SeatLayoutService {
         }
     }
 
+    /**
+     * Xóa mềm layout ghế (giữ nguyên để backward compatibility)
+     * Sử dụng toggleSeatLayoutsVisibility với IsActive = false
+     */
+    async softDeleteSeatLayouts(model, sequelize) {
+        // Tái sử dụng hàm toggleSeatLayoutsVisibility với IsActive = false
+        const toggleModel = {
+            ...model,
+            IsActive: false
+        };
+
+        const result = await this.toggleSeatLayoutsVisibility(toggleModel, sequelize);
+
+        // Chuyển đổi message để phù hợp với context "xóa mềm"
+        if (result.success) {
+            result.message = `Đã xóa mềm thành công ${result.affected_count} ghế`;
+        }
+
+        return result;
+    }
+
+    /**
+     * Tạo phòng chiếu mới với layout có sẵn
+     */
+    async createRoomWithExistingLayout(model) {
+        // Kiểm tra phòng chiếu mẫu có tồn tại không
+        const templateRoom = await CinemaRoom.findByPk(model.TemplateRoomId);
+        if (!templateRoom) {
+            throw new Error(`Không tìm thấy phòng chiếu mẫu có ID ${model.TemplateRoomId}`);
+        }
+
+        // Kiểm tra xem phòng chiếu mẫu có layout ghế không
+        const templateLayouts = await SeatLayout.findAll({
+            where: {
+                Cinema_Room_ID: model.TemplateRoomId,
+                Is_Active: true
+            }
+        });
+
+        if (templateLayouts.length === 0) {
+            throw new Error('Phòng chiếu mẫu không có layout ghế active để sao chép');
+        }
+
+        // Kiểm tra số lượng ghế hợp lệ
+        const activeSeatCount = templateLayouts.length;
+        if (activeSeatCount < 20 || activeSeatCount > 150) {
+            throw new Error(`Số lượng ghế trong phòng mẫu phải từ 20 đến 150 (hiện tại: ${activeSeatCount})`);
+        }
+
+        const transaction = await sequelize.transaction();
+
+        try {
+            // Tạo phòng chiếu mới
+            const newRoom = await CinemaRoom.create({
+                Room_Name: model.RoomName,
+                Room_Type: model.RoomType,
+                Seat_Quantity: activeSeatCount,
+                Status: 'Active'
+            }, { transaction });
+
+            // Sao chép layout ghế từ phòng chiếu mẫu
+            const newLayouts = templateLayouts.map(templateLayout => ({
+                Cinema_Room_ID: newRoom.Cinema_Room_ID,
+                Row_Label: templateLayout.Row_Label,
+                Column_Number: templateLayout.Column_Number,
+                Seat_Type: templateLayout.Seat_Type,
+                Is_Active: templateLayout.Is_Active
+            }));
+
+            await SeatLayout.bulkCreate(newLayouts, { transaction });
+
+            await transaction.commit();
+
+            return {
+                cinema_room: {
+                    Cinema_Room_ID: newRoom.Cinema_Room_ID,
+                    Room_Name: newRoom.Room_Name,
+                    Room_Type: newRoom.Room_Type,
+                    seat_quantity: newRoom.Seat_Quantity
+                },
+                message: 'Đã tạo phòng chiếu mới và sao chép layout ghế thành công'
+            };
+
+        } catch (error) {
+            await transaction.rollback();
+            throw error;
+        }
+    }
+
+    /**
+     * Kiểm tra xem có booking chờ xử lý nào sử dụng các layout ID không
+     */
+    async hasPendingBookingsForLayouts(layoutIds, sequelize) {
+        try {
+            if (!layoutIds || !Array.isArray(layoutIds) || layoutIds.length === 0) {
+                return false;
+            }
+
+            // Import Op từ Sequelize, không phụ thuộc vào sequelize được truyền vào
+            const { Op } = require('sequelize');
+
+            // Lấy danh sách Seat với các Layout_ID
+            const seats = await Seat.findAll({
+                where: {
+                    Layout_ID: { [Op.in]: layoutIds },
+                    Is_Active: true
+                },
+                attributes: ['Seat_ID']
+            });
+
+            if (!seats || seats.length === 0) {
+                return false;
+            }
+
+            // Lấy các vé đã đặt cho các ghế này
+            const tickets = await Ticket.findAll({
+                where: {
+                    Seat_ID: { [Op.in]: seats.map(seat => seat.Seat_ID) },
+                    Status: { [Op.notIn]: ['Cancelled', 'Expired'] }
+                },
+                include: [{
+                    model: TicketBooking,
+                    as: 'TicketBooking',
+                    where: {
+                        Status: 'Pending'
+                    },
+                    required: true
+                }]
+            });
+
+            return tickets.length > 0; // Có booking pending nếu có vé
+        } catch (error) {
+            console.error('Lỗi trong hàm hasPendingBookingsForLayouts:', error);
+            return true; // Mặc định trả về true để an toàn
+        }
+    }
+
+    /**
+     * Kiểm tra xem phòng chiếu có đặt vé đang chờ không
+     */
+    async hasPendingBookingsForRoom(roomId) {
+        try {
+            // Lấy sequelize từ models
+            const { sequelize } = require('../models');
+
+            // Lấy tất cả layout ghế của phòng
+            const layouts = await SeatLayout.findAll({
+                where: { Cinema_Room_ID: roomId },
+                attributes: ['Layout_ID']
+            });
+
+            if (layouts.length === 0) {
+                return false;
+            }
+
+            // Dùng phương thức đã có để kiểm tra
+            return await this.hasPendingBookingsForLayouts(
+                layouts.map(l => l.Layout_ID),
+                sequelize
+            );
+        } catch (error) {
+            console.error('Lỗi trong hàm hasPendingBookingsForRoom:', error);
+            return true; // Mặc định trả về true để an toàn
+        }
+    }
+
+    /**
+     * Lấy thống kê sử dụng ghế cho một phòng trong khoảng thời gian
+     * @param {number} roomId - ID của phòng chiếu
+     * @param {number} days - Số ngày cần lấy thống kê (mặc định 30 ngày)
+     * @returns {object} Thống kê sử dụng ghế
+     */
+    async getSeatUsageStats(roomId, days = 30) {
+        const { CinemaRoom, Booking_Seat, Showtime, TicketBooking, SeatLayout, sequelize } = require('../models');
+        const { Op } = require('sequelize');
+
+        // Kiểm tra phòng chiếu tồn tại
+        const room = await CinemaRoom.findByPk(roomId);
+        if (!room) {
+            throw new Error(`Không tìm thấy phòng chiếu với ID ${roomId}`);
+        }
+
+        // Xác định khoảng thời gian tính thống kê
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+
+        // Lấy tất cả các suất chiếu đã kết thúc trong phòng này
+        const showtimes = await Showtime.findAll({
+            where: {
+                Cinema_Room_ID: roomId,
+                Show_Date: { [Op.between]: [startDate, endDate] },
+                Status: 'Finished'
+            },
+            attributes: ['Showtime_ID']
+        });
+
+        // Nếu không có suất chiếu nào
+        if (!showtimes.length) {
+            return {
+                room_id: roomId,
+                room_name: room.Room_Name,
+                period_days: days,
+                total_bookings: 0,
+                seat_usage: [],
+                most_booked_seats: [],
+                least_booked_seats: []
+            };
+        }
+
+        // Lấy ID các suất chiếu
+        const showtimeIds = showtimes.map(s => s.Showtime_ID);
+
+        // Lấy tất cả các đặt ghế cho các suất chiếu này
+        const seatBookings = await Booking_Seat.findAll({
+            include: [{
+                model: TicketBooking,
+                as: 'TicketBooking',
+                where: {
+                    Showtime_ID: { [Op.in]: showtimeIds },
+                    Status: 'Completed'
+                },
+                required: true
+            }]
+        });
+
+        // Lấy layout ghế hiện tại của phòng
+        const currentLayout = await SeatLayout.findAll({
+            where: {
+                Cinema_Room_ID: roomId,
+                Is_Active: true
+            }
+        });
+
+        // Tính tần suất sử dụng của từng ghế
+        const seatUsageCount = {};
+        seatBookings.forEach(booking => {
+            const seatKey = `${booking.Seat_Row}${booking.Seat_Number}`;
+            seatUsageCount[seatKey] = (seatUsageCount[seatKey] || 0) + 1;
+        });
+
+        // Chuyển thành mảng để sắp xếp
+        const seatUsageArray = Object.keys(seatUsageCount).map(key => ({
+            seat: key,
+            count: seatUsageCount[key],
+            row: key.replace(/[0-9]/g, ''),
+            number: parseInt(key.replace(/[^0-9]/g, ''))
+        }));
+
+        // Sắp xếp theo số lần đặt
+        seatUsageArray.sort((a, b) => b.count - a.count);
+
+        // Lấy top ghế được đặt nhiều nhất và ít nhất
+        const mostBooked = seatUsageArray.slice(0, 5);
+        const leastBooked = [...seatUsageArray].sort((a, b) => a.count - b.count).slice(0, 5);
+
+        return {
+            room_id: roomId,
+            room_name: room.Room_Name,
+            period_days: days,
+            total_bookings: seatBookings.length,
+            seat_usage: seatUsageArray,
+            most_booked_seats: mostBooked,
+            least_booked_seats: leastBooked
+        };
+    }
+
+    /**
+     * Chuyển đổi chuỗi đầu vào hàng ghế thành mảng các ký tự
+     * Hỗ trợ các định dạng "A,B,C" hoặc "A-E"
+     */
+    parseRowsInput(rowsInput) {
+        if (!rowsInput || rowsInput.trim() === '') {
+            return [];
+        }
+
+        let rowLabels = [];
+
+        if (rowsInput.includes('-')) {
+            const range = rowsInput.split('-');
+            if (range.length === 2 && range[0].length === 1 && range[1].length === 1) {
+                const start = range[0].charCodeAt(0);
+                const end = range[1].charCodeAt(0);
+
+                if (start > end) {
+                    return [];
+                }
+
+                for (let c = start; c <= end; c++) {
+                    rowLabels.push(String.fromCharCode(c));
+                }
+            }
+        } else {
+            rowLabels = rowsInput.split(',')
+                .map(r => r.trim())
+                .filter(r => r.length > 0);
+        }
+
+        return rowLabels;
+    }
 }
 
 module.exports = new SeatLayoutService();

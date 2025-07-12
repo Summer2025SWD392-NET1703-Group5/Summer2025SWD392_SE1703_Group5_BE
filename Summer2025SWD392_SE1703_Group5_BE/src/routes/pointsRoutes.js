@@ -217,7 +217,7 @@ router.get('/redemption-history', authMiddleware, pointsController.getRedemption
  */
 router.get('/users/:userId', authMiddleware, authorizeRoles('Admin'), pointsController.getUserPoints);
 
-    /**
+/**
  * @swagger
  * /api/points/user/{userId}:
  *   get:

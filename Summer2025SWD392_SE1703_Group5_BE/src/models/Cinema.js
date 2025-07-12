@@ -27,10 +27,6 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING(50),
             allowNull: false,
         },
-        Province: {
-            type: DataTypes.STRING(50),
-            allowNull: false,
-        },
         Phone_Number: {
             type: DataTypes.STRING(20),
             allowNull: true,
@@ -61,7 +57,7 @@ module.exports = (sequelize, DataTypes) => {
         sequelize,
         modelName: 'Cinema',
         tableName: 'Cinemas',
-        schema: 'db_ab91f9_gr5',
+        schema: 'ksf00691_team03',
         timestamps: false,
     });
     return Cinema;

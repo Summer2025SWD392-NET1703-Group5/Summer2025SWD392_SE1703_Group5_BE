@@ -1,0 +1,59 @@
+{
+    "basePrices": {
+        "2D": {
+            "Regular": 90000,
+            "VIP": 120000
+        },
+        "3D": {
+            "Regular": 120000,
+            "VIP": 150000
+        },
+        "IMAX": {
+            "Regular": 150000,
+            "VIP": 200000
+        }
+    },
+    "dayTypes": {
+        "weekday": {
+            "multiplier": 1,
+            "description": "Ngày thường (Thứ 2 - Thứ 6)"
+        },
+        "weekend": {
+            "multiplier": 1.2,
+            "description": "Cuối tuần (Thứ 7, Chủ nhật)"
+        },
+        "holiday": {
+            "multiplier": 1.5,
+            "description": "Ngày lễ"
+        }
+    },
+    "timeSlots": {
+        "morning": {
+            "startTime": "08:00:00",
+            "endTime": "12:00:00",
+            "multiplier": 0.9,
+            "description": "Buổi sáng"
+        },
+        "afternoon": {
+            "startTime": "12:00:00",
+            "endTime": "22:00:00",
+            "multiplier": 1,
+            "description": "Buổi chiều"
+        },
+        "evening": {
+            "startTime": "22:00:00",
+            "endTime": "23:59:59",
+            "multiplier": 0.8,
+            "description": "Buổi tối"
+        }
+    },
+    "holidays": [
+        "2025-01-01",
+        "2025-01-22",
+        "2025-01-23",
+        "2025-01-24",
+        "2025-04-30",
+        "2025-05-01",
+        "2025-09-02"
+    ]
+}

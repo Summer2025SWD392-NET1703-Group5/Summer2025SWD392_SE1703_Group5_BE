@@ -887,6 +887,97 @@ class PayOSService {
 
                 logger.info(`Đã xử lý thành công thanh toán cho booking ${bookingId}`);
 
+                // Gửi email vé cho khách hàng sau khi đã hoàn tất giao dịch
+                try {
+                    // Lấy thông tin người dùng để lấy email
+                    const userQuery = `
+                        SELECT u.Email 
+                        FROM [ksf00691_team03].[Ticket_Bookings] tb
+                        JOIN [ksf00691_team03].[Users] u ON tb.User_ID = u.User_ID
+                        WHERE tb.Booking_ID = @bookingId
+                    `;
+                    
+                    const userRequest = pool.request();
+                    userRequest.input('bookingId', sql.Int, bookingId);
+                    const userResult = await userRequest.query(userQuery);
+                    
+                    if (userResult.recordset.length > 0) {
+                        const userEmail = userResult.recordset[0].Email;
+                        
+                        // Thêm bản ghi lịch sử về việc đưa email vào hàng đợi
+                        try {
+                            await pool.request()
+                                .input('bookingId', sql.Int, bookingId)
+                                .input('status', sql.VarChar(50), 'Email Queued')
+                                .input('notes', sql.NVarChar(500), `Email vé điện tử đã được đưa vào hàng đợi gửi đến ${userEmail}`)
+                                .query(`
+                                    INSERT INTO [ksf00691_team03].[Booking_History]
+                                    (Booking_ID, Status, Date, Notes, IsRead)
+                                    VALUES (@bookingId, @status, GETDATE(), @notes, 0)
+                                `);
+                        } catch (historyError) {
+                            logger.warn(`Không thể tạo lịch sử hàng đợi email: ${historyError.message}`);
+                        }
+                        
+                        // Sử dụng hệ thống queue để gửi email ngay sau khi trả response
+                        logger.info(`Thêm vào hàng đợi gửi email vé cho booking ${bookingId} đến ${userEmail}`);
+                        
+                        // Sử dụng nextTick để đảm bảo không ảnh hưởng đến luồng xử lý chính
+                        process.nextTick(async () => {
+                            try {
+                                // Kiểm tra xem hệ thống queue có sẵn sàng không
+                                try {
+                                    // Thử import queue system
+                                    const queues = require('../queues');
+                                    if (queues && queues.addEmailJob) {
+                                        // Thêm job vào queue để xử lý bất đồng bộ
+                                        const jobAdded = await queues.addEmailJob(bookingId, userEmail);
+                                        
+                                        if (jobAdded) {
+                                            logger.info(`Đã thêm job gửi email vé cho booking ${bookingId} vào hàng đợi`);
+                                            return;
+                                        }
+                                    }
+                                } catch (queueError) {
+                                    logger.warn(`Không thể sử dụng queue để gửi email: ${queueError.message}`);
+                                }
+                                
+                                // Nếu không thể dùng queue, gửi trực tiếp (fallback)
+                                logger.info(`Gửi email vé trực tiếp cho booking ${bookingId}`);
+                                const TicketService = require('./ticketService');
+                                const ticketService = new TicketService();
+                                const emailResult = await ticketService.sendTicketByEmailAsync(bookingId, userEmail);
+                                
+                                if (emailResult) {
+                                    logger.info(`Đã gửi email vé thành công cho booking ${bookingId} đến ${userEmail}`);
+                                    
+                                    // Cập nhật lịch sử gửi email
+                                    try {
+                                        await pool.request()
+                                            .input('bookingId', sql.Int, bookingId)
+                                            .input('status', sql.VarChar(50), 'Email Sent')
+                                            .input('notes', sql.NVarChar(500), `Email vé điện tử đã được gửi đến ${userEmail}`)
+                                            .query(`
+                                                INSERT INTO [ksf00691_team03].[Booking_History]
+                                                (Booking_ID, Status, Date, Notes, IsRead)
+                                                VALUES (@bookingId, @status, GETDATE(), @notes, 0)
+                                            `);
+                                    } catch (historyError) {
+                                        logger.warn(`Không thể cập nhật lịch sử gửi email: ${historyError.message}`);
+                                    }
+                                }
+                            } catch (asyncError) {
+                                logger.error(`Lỗi khi xử lý email bất đồng bộ: ${asyncError.message}`);
+                            }
+                        });
+                    } else {
+                        logger.warn(`Không tìm thấy email người dùng cho booking ${bookingId}`);
+                    }
+                } catch (emailError) {
+                    logger.error(`Lỗi khi chuẩn bị gửi email vé: ${emailError.message}`, emailError);
+                    // Không ảnh hưởng đến luồng thanh toán nếu có lỗi
+                }
+
                 return {
                     success: true,
                     bookingId: bookingId,

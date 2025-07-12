@@ -33,7 +33,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'UserPoints',
     tableName: 'User_Points',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return UserPoints;

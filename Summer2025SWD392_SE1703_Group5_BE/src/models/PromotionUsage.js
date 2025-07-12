@@ -74,7 +74,7 @@ module.exports = (sequelize) => {
       sequelize,
       modelName: 'PromotionUsage',
       tableName: 'Promotion_Usage',
-      schema: 'db_ab91f9_gr5',
+      schema: 'ksf00691_team03',
       timestamps: false,
       indexes: [
         {

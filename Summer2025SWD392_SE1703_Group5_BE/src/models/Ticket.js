@@ -6,12 +6,14 @@ module.exports = (sequelize, DataTypes) => {
     static associate(models) {
       Ticket.belongsTo(models.TicketBooking, { foreignKey: 'Booking_ID', as: 'TicketBooking' });
       Ticket.belongsTo(models.Seat, { foreignKey: 'Seat_ID', as: 'Seat' });
+      Ticket.belongsTo(models.Showtime, { foreignKey: 'Showtime_ID', as: 'Showtime' });
     }
   }
   Ticket.init({
     Ticket_ID: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     Booking_ID: { type: DataTypes.INTEGER, allowNull: false },
     Seat_ID: { type: DataTypes.INTEGER, allowNull: false },
+    Showtime_ID: { type: DataTypes.INTEGER, allowNull: false },
     Base_Price: { type: DataTypes.DECIMAL, allowNull: false },
     Discount_Amount: { type: DataTypes.DECIMAL, defaultValue: 0 },
     Final_Price: { type: DataTypes.DECIMAL, allowNull: false },
@@ -23,7 +25,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'Ticket',
     tableName: 'Tickets',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return Ticket;

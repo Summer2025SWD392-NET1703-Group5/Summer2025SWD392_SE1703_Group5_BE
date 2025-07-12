@@ -66,6 +66,7 @@ class PointsService {
 
             // Lưu lại tổng tiền ban đầu
             const originalTotalAmount = booking.Total_Amount;
+            logger.info(`Tổng tiền ban đầu của booking ${bookingId}: ${originalTotalAmount}`);
 
             // Lấy tỷ lệ chuyển đổi điểm sang tiền
             const pointConversionRate = 1; // 1 điểm = 1 VND
@@ -82,7 +83,7 @@ class PointsService {
 
             // Cập nhật điểm người dùng
             const userPoints = await UserPoints.findOne({
-                where: { User_ID: userId },
+                where: { user_id: userId },
                 transaction
             });
 
@@ -91,18 +92,23 @@ class PointsService {
             }
 
             // Kiểm tra số dư điểm
-            if (userPoints.Total_Points < actualPointsToUse) {
-                throw new Error(`Số dư điểm không đủ. Hiện có: ${userPoints.Total_Points}, Yêu cầu: ${actualPointsToUse}`);
+            if (userPoints.total_points < actualPointsToUse) {
+                throw new Error(`Số dư điểm không đủ. Hiện có: ${userPoints.total_points}, Yêu cầu: ${actualPointsToUse}`);
             }
 
             // Cập nhật tổng số tiền booking
             const discountedTotalAmount = originalTotalAmount - discountAmount;
+            
+            // SỬA ĐỔI: Cập nhật cả Total_Amount và Discount_Amount
             booking.Total_Amount = discountedTotalAmount;
             booking.Points_Used = actualPointsToUse;
+            booking.Discount_Amount = discountAmount;
+
+            logger.info(`Cập nhật booking ${bookingId}: Tổng tiền ban đầu=${originalTotalAmount}, Giảm giá=${discountAmount}, Tổng tiền sau giảm=${discountedTotalAmount}, Điểm sử dụng=${actualPointsToUse}`);
 
             // Trừ điểm người dùng
-            userPoints.Total_Points -= actualPointsToUse;
-            userPoints.Last_Updated = new Date();
+            userPoints.total_points -= actualPointsToUse;
+            userPoints.last_updated = sequelize.literal('GETDATE()');
 
             // Tạo bản ghi đổi điểm
             const pointsRedemption = {
@@ -118,7 +124,7 @@ class PointsService {
             const bookingHistory = {
                 Booking_ID: bookingId,
                 Status: 'Points Applied',
-                Notes: `Đã sử dụng ${actualPointsToUse} điểm để giảm giá cho đơn đặt vé này`,
+                Notes: `Đã sử dụng ${actualPointsToUse} điểm để giảm giá ${discountAmount.toLocaleString('vi-VN')}đ cho đơn đặt vé này`,
                 Date: sequelize.literal('GETDATE()'),
                 IsRead: false
             };
@@ -131,34 +137,19 @@ class PointsService {
             // Commit transaction
             await transaction.commit();
 
-            // Tạo response DTO
-            const response = {
-                booking_id: booking.Booking_ID,
-                original_total_amount: originalTotalAmount,
-                discounted_total_amount: discountedTotalAmount,
-                points_used: actualPointsToUse,
-                current_points: userPoints.Total_Points,
-                user_id: booking.User_ID,
-                booking_date: booking.Booking_Date,
-                status: booking.Status,
-                movie_name: booking.Showtime?.Movie?.Movie_Name,
-                room_name: booking.Showtime?.CinemaRoom?.Room_Name,
-                show_date: booking.Showtime?.Show_Date,
-                start_time: booking.Showtime?.Start_Time
+            // Trả về thông tin chi tiết
+            return {
+                bookingId: bookingId,
+                originalAmount: originalTotalAmount,
+                discountAmount: discountAmount,
+                finalAmount: discountedTotalAmount,
+                pointsUsed: actualPointsToUse,
+                remainingPoints: userPoints.total_points
             };
-
-            return response;
-
         } catch (error) {
-            // Chỉ rollback nếu transaction vẫn đang mở và chưa kết thúc
-            if (transaction && !transaction.finished) {
-                try {
+            // Rollback transaction nếu có lỗi
                     await transaction.rollback();
-                } catch (rollbackError) {
-                    logger.error(`Lỗi rollback transaction: ${rollbackError.message}`);
-                }
-            }
-            logger.error(`Lỗi khi áp dụng điểm giảm giá cho booking ${bookingId}`, error);
+            logger.error(`Lỗi khi áp dụng điểm giảm giá: ${error.message}`);
             throw error;
         }
     }
@@ -171,8 +162,8 @@ class PointsService {
             logger.info(`[getUserPointsAsync] Đang tìm điểm cho user ID: ${userId}`);
 
             const userPoints = await UserPoints.findOne({
-                where: { User_ID: userId },
-                attributes: ['UserPoints_ID', 'User_ID', 'Total_Points', 'Last_Updated']
+                where: { user_id: userId },
+                attributes: ['UserPoints_ID', 'user_id', 'total_points', 'last_updated']
             });
 
             if (!userPoints) {
@@ -186,9 +177,9 @@ class PointsService {
 
             // Chuyển đổi sang đối tượng phản hồi chuẩn
             const result = {
-                user_id: userPoints.User_ID,
-                total_points: userPoints.Total_Points || 0,
-                last_updated: userPoints.Last_Updated
+                user_id: userPoints.user_id,
+                total_points: userPoints.total_points || 0,
+                last_updated: userPoints.last_updated
             };
 
             return result;
@@ -204,10 +195,10 @@ class PointsService {
     async getUserPointsTotalAsync(userId) {
         try {
             const userPoints = await UserPoints.findOne({
-                where: { User_ID: userId }
+                where: { user_id: userId }
             });
 
-            return userPoints?.Total_Points ?? 0;
+            return userPoints?.total_points ?? 0;
         } catch (error) {
             logger.error(`Lỗi khi lấy tổng số điểm của người dùng ${userId}`, error);
             throw error;
@@ -229,14 +220,30 @@ class PointsService {
                 throw new Error('Thiếu thông tin cần thiết để tích điểm');
             }
 
-            // Làm tròn số điểm xuống (1% tổng tiền)
-            let pointsToAdd = Math.floor(totalAmount * 0.1);
+            // Tính điểm tích lũy với giới hạn tối đa 50% số tiền hóa đơn
+            let pointsToAdd = Math.floor(totalAmount * 0.1); // 10% tổng tiền
+            
+            // ✅ GIỚI HẠN TỐI ĐA 50% SỐ TIỀN HÓA ĐƠN
+            const maxPointsAllowed = Math.floor(totalAmount * 0.5); // 50% tổng tiền
+            if (pointsToAdd > maxPointsAllowed) {
+                logger.warn(`Giới hạn điểm tích lũy: ${pointsToAdd} điểm vượt quá 50% hóa đơn (${maxPointsAllowed}). Điều chỉnh về ${maxPointsAllowed} điểm.`);
+                pointsToAdd = maxPointsAllowed;
+            }
+            
+            logger.info(`Tích điểm cho hóa đơn ${totalAmount} VND: ${pointsToAdd} điểm (giới hạn tối đa ${maxPointsAllowed} điểm)`);
 
             // Kiểm tra nếu booking đã có số điểm dự kiến
             const booking = await TicketBooking.findByPk(bookingId);
             if (booking && booking.Points_Earned && booking.Points_Earned > 0) {
-                logger.info(`Sử dụng ${booking.Points_Earned} điểm đã lưu trong booking ${bookingId}`);
-                pointsToAdd = booking.Points_Earned;
+                // ✅ KIỂM TRA ĐIỂM ĐÃ LƯU CŨNG PHẢI TUÂN THỦ GIỚI HẠN 50%
+                const savedPoints = booking.Points_Earned;
+                if (savedPoints > maxPointsAllowed) {
+                    logger.warn(`Điểm đã lưu trong booking ${bookingId} (${savedPoints}) vượt quá giới hạn 50% (${maxPointsAllowed}). Sử dụng ${maxPointsAllowed} điểm.`);
+                    pointsToAdd = maxPointsAllowed;
+                } else {
+                    logger.info(`Sử dụng ${savedPoints} điểm đã lưu trong booking ${bookingId} (hợp lệ với giới hạn ${maxPointsAllowed})`);
+                    pointsToAdd = savedPoints;
+                }
             }
 
             if (pointsToAdd <= 0) {
@@ -270,16 +277,16 @@ class PointsService {
 
                 // Cập nhật tổng điểm người dùng
                 const userPoints = await UserPoints.findOne({
-                    where: { User_ID: userId }
+                    where: { user_id: userId }
                 });
 
                 if (!userPoints) {
                     // Tạo mới nếu chưa có
                     logger.info(`Tạo bản ghi UserPoints mới cho user ID ${userId} với ${pointsToAdd} điểm`);
                     const createData = {
-                        User_ID: userId,
-                        Total_Points: pointsToAdd,
-                        Last_Updated: sequelize.literal('GETDATE()')
+                        user_id: userId,
+                        total_points: pointsToAdd,
+                        last_updated: sequelize.literal('GETDATE()')
                     };
 
                     logger.info(`Dữ liệu tạo UserPoints: ${JSON.stringify(createData)}`);
@@ -287,14 +294,14 @@ class PointsService {
                     logger.info(`Tạo mới bản ghi User_Points thành công cho user ${userId} với ${pointsToAdd} điểm`);
                 } else {
                     // Cập nhật nếu đã có
-                    await userPoints.increment('Total_Points', {
+                    await userPoints.increment('total_points', {
                         by: pointsToAdd,
                         transaction
                     });
 
                     // Cập nhật thời gian
                     await userPoints.update({
-                        Last_Updated: sequelize.literal('GETDATE()')
+                        last_updated: sequelize.literal('GETDATE()')
                     }, { transaction });
 
                     logger.info(`Cập nhật thành công User_Points cho user ${userId}, cộng thêm ${pointsToAdd} điểm`);
@@ -401,7 +408,7 @@ class PointsService {
             // Tìm thông tin điểm hiện tại của user
             logger.info(`Lấy thông tin điểm hiện tại của User ${userId}`);
             const userPoints = await UserPoints.findOne({
-                where: { User_ID: userId },
+                where: { user_id: userId },
                 transaction: t
             });
 
@@ -412,13 +419,13 @@ class PointsService {
             }
 
             // Cộng điểm vào tài khoản
-            const oldPoints = userPoints.Total_Points;
+            const oldPoints = userPoints.total_points;
             const newPoints = oldPoints + pointsToRefund;
             logger.info(`Cập nhật điểm từ ${oldPoints} thành ${newPoints}`);
 
             await userPoints.update({
-                Total_Points: newPoints,
-                Last_Updated: new Date()
+                total_points: newPoints,
+                last_updated: sequelize.literal('GETDATE()')
             }, { transaction: t });
 
             // Tạo bản ghi hoàn điểm (với giá trị âm để biểu thị hoàn trả)

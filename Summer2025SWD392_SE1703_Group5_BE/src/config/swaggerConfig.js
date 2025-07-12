@@ -25,13 +25,13 @@ const options = {
         ],
         components: { // Các thành phần tái sử dụng được trong API.
             securitySchemes: { // Định nghĩa các cơ chế bảo mật.
-                // FIX: Sử dụng apiKey thay vì bearerAuth để đơn giản hóa
-                ApiKeyAuth: {
-                    type: 'apiKey', // Loại authentication là API Key
-                    in: 'header', // API Key được gửi qua header
-                    name: 'Authorization', // Tên của header
-                    description: 'Nhập JWT token (không cần "Bearer"). Ví dụ: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
-                },
+                // Chỉ giữ lại một phương thức xác thực duy nhất
+                bearerAuth: {
+                    type: 'http',
+                    scheme: 'bearer',
+                    bearerFormat: 'JWT',
+                    description: 'Nhập JWT token. Ví dụ: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+                }
             },
         },
     },
@@ -44,10 +44,23 @@ const options = {
     ],
 };
 
+// Cập nhật cấu hình để không hiển thị placeholder mà hiển thị giá trị thực tế
+options.definition.swaggerOptions = {
+    tryItOutEnabled: true,
+    supportedSubmitMethods: ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'],
+    displayRequestDuration: true,
+    persistAuthorization: true,
+    filter: true,
+    showExtensions: true,
+    showCommonExtensions: true,
+    deepLinking: true,
+    displayOperationId: false,
+    defaultModelRendering: 'model',
+    docExpansion: 'none'
+};
+
 // Tạo đối tượng swaggerSpec (OpenAPI specification) từ các options đã định nghĩa.
 const swaggerSpec = swaggerJsdoc(options);
-
-
 
 // Export swaggerSpec để sử dụng trong file server.js.
 module.exports = swaggerSpec;

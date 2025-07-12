@@ -25,7 +25,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'TicketPricing',
     tableName: 'Ticket_Pricing',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
     indexes: [
       {

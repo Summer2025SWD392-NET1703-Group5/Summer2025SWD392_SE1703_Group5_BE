@@ -1,3 +1,4 @@
+
 const { getConnection } = require('../config/database');
 const logger = require('../utils/logger');
 const sql = require('mssql');
@@ -1500,6 +1501,257 @@ class PromotionService {
             return `Giảm ${discountValue}% (${this.formatCurrency(discountAmount)} VND)`;
         } else {
             return `Giảm ${this.formatCurrency(discountValue)} VND`;
+        }
+    }
+
+    /**
+     * Lấy danh sách mã khuyến mãi phù hợp với booking và chưa được sử dụng
+     * @param {number} bookingId - ID của booking
+     * @param {number} userId - ID của user
+     * @returns {Array} Danh sách mã khuyến mãi phù hợp
+     */
+    async getAvailablePromotionsForBooking(bookingId, userId) {
+        try {
+            logger.info(`Lấy danh sách mã khuyến mãi phù hợp cho booking ${bookingId}, user ${userId}`);
+
+            // Lấy thông tin booking
+            const booking = await this.models.TicketBooking.findByPk(bookingId, {
+                include: [
+                    { model: this.models.User, as: 'User', attributes: ['User_ID', 'Full_Name'] }
+                ]
+            });
+
+            if (!booking) {
+                throw new NotFoundError(`Không tìm thấy booking với ID ${bookingId}`);
+            }
+
+            // Kiểm tra trạng thái booking
+            if (booking.Status !== 'Pending') {
+                return {
+                    success: false,
+                    message: 'Chỉ có thể áp dụng mã khuyến mãi cho booking đang chờ thanh toán',
+                    promotions: []
+                };
+            }
+
+            // Kiểm tra booking đã có promotion chưa
+            if (booking.Promotion_ID) {
+                return {
+                    success: false,
+                    message: 'Booking này đã áp dụng mã khuyến mãi',
+                    promotions: []
+                };
+            }
+
+            const now = new Date();
+            const totalAmount = parseFloat(booking.Total_Amount);
+
+            // Lấy danh sách promotion phù hợp
+            const availablePromotions = await this.models.Promotion.findAll({
+                where: {
+                    Status: PROMOTION_STATUS.ACTIVE,
+                    Start_Date: { [Op.lte]: now },
+                    End_Date: { [Op.gte]: now },
+                    Minimum_Purchase: { [Op.lte]: totalAmount },
+                    [Op.or]: [
+                        { Usage_Limit: null },
+                        { Usage_Limit: { [Op.gt]: this.models.sequelize.col('Current_Usage') } }
+                    ]
+                },
+                order: [['Minimum_Purchase', 'ASC'], ['Created_At', 'DESC']]
+            });
+
+            // Lọc ra những mã user chưa sử dụng
+            const validPromotions = [];
+            for (const promotion of availablePromotions) {
+                // Kiểm tra user đã sử dụng mã này chưa
+                const userUsage = await this.models.PromotionUsage.findOne({
+                    include: [
+                        {
+                            model: this.models.TicketBooking,
+                            as: 'TicketBooking',
+                            where: {
+                                Status: { [Op.ne]: 'Cancelled' }
+                            }
+                        }
+                    ],
+                    where: {
+                        User_ID: userId,
+                        Promotion_ID: promotion.Promotion_ID,
+                        HasUsed: true
+                    }
+                });
+
+                if (!userUsage) {
+                    // Tính toán discount
+                    const discountAmount = this.calculateDiscountAmount(promotion, totalAmount);
+                    const finalAmount = totalAmount - discountAmount;
+
+                    let discountDescription = '';
+                    if (promotion.Discount_Type === DISCOUNT_TYPE.PERCENTAGE) {
+                        discountDescription = `Giảm ${promotion.Discount_Value}%`;
+                        if (promotion.Maximum_Discount) {
+                            discountDescription += ` (tối đa ${this.formatCurrency(promotion.Maximum_Discount)}đ)`;
+                        }
+                    } else {
+                        discountDescription = `Giảm ${this.formatCurrency(promotion.Discount_Value)}đ`;
+                    }
+
+                    validPromotions.push({
+                        Promotion_ID: promotion.Promotion_ID,
+                        Title: promotion.Title,
+                        Promotion_Code: promotion.Promotion_Code,
+                        Discount_Type: promotion.Discount_Type,
+                        Discount_Value: promotion.Discount_Value,
+                        Minimum_Purchase: promotion.Minimum_Purchase,
+                        Maximum_Discount: promotion.Maximum_Discount,
+                        End_Date: promotion.End_Date,
+                        Promotion_Detail: promotion.Promotion_Detail,
+                        Discount_Description: discountDescription,
+                        Discount_Amount: discountAmount,
+                        Final_Amount: finalAmount,
+                        Usage_Remaining: promotion.Usage_Limit ? promotion.Usage_Limit - promotion.Current_Usage : null
+                    });
+                }
+            }
+
+            logger.info(`Tìm thấy ${validPromotions.length} mã khuyến mãi phù hợp cho booking ${bookingId}`);
+
+            return {
+                success: true,
+                message: `Tìm thấy ${validPromotions.length} mã khuyến mãi phù hợp`,
+                booking_info: {
+                    Booking_ID: booking.Booking_ID,
+                    Total_Amount: totalAmount,
+                    User_Name: booking.User?.Full_Name || 'Không xác định'
+                },
+                promotions: validPromotions
+            };
+
+        } catch (error) {
+            logger.error(`Lỗi khi lấy danh sách mã khuyến mãi cho booking ${bookingId}:`, error);
+            if (error instanceof NotFoundError) throw error;
+            throw new AppError('Lỗi khi lấy danh sách mã khuyến mãi phù hợp', 500, error);
+        }
+    }
+
+    /**
+     * Xóa điểm khỏi booking (hoàn lại điểm đã sử dụng)
+     * @param {number} bookingId - ID của booking
+     * @param {number} currentUserId - ID của user thực hiện thao tác
+     * @returns {Object} Kết quả xóa điểm
+     */
+    async removePointsFromBooking(bookingId, currentUserId) {
+        let transaction;
+        try {
+            logger.info(`Bắt đầu xóa điểm khỏi booking ${bookingId} bởi user ${currentUserId}`);
+
+            transaction = await this.models.sequelize.transaction();
+
+            // Lấy thông tin booking
+            const booking = await this.models.TicketBooking.findByPk(bookingId, { transaction });
+
+            if (!booking) {
+                await transaction.rollback();
+                throw new NotFoundError(`Không tìm thấy booking với ID ${bookingId}`);
+            }
+
+            // Kiểm tra trạng thái booking
+            if (booking.Status !== 'Pending') {
+                await transaction.rollback();
+                return {
+                    success: false,
+                    message: 'Chỉ có thể xóa điểm khỏi booking đang chờ thanh toán'
+                };
+            }
+
+            // Kiểm tra booking có sử dụng điểm không
+            if (!booking.Points_Used || booking.Points_Used <= 0) {
+                await transaction.rollback();
+                return {
+                    success: false,
+                    message: 'Booking này không có điểm nào được sử dụng'
+                };
+            }
+
+            const pointsToRefund = booking.Points_Used;
+            const userId = booking.User_ID;
+
+            // Lấy thông tin điểm hiện tại của user
+            let userPoints = await this.models.UserPoints.findOne({
+                where: { User_ID: userId },
+                transaction
+            });
+
+            if (!userPoints) {
+                // Tạo bản ghi điểm mới nếu chưa có
+                userPoints = await this.models.UserPoints.create({
+                    User_ID: userId,
+                    Total_Points: 0,
+                    Last_Updated: this.models.sequelize.literal('GETDATE()')
+                }, { transaction });
+            }
+
+            // Hoàn lại điểm cho user
+            const newTotalPoints = userPoints.Total_Points + pointsToRefund;
+            await userPoints.update({
+                Total_Points: newTotalPoints,
+                Last_Updated: this.models.sequelize.literal('GETDATE()')
+            }, { transaction });
+
+            // Tạo bản ghi hoàn điểm
+            await this.models.PointsRedemption.create({
+                User_ID: userId,
+                Points_Redeemed: -pointsToRefund, // Giá trị âm = hoàn trả
+                Date: this.models.sequelize.literal('GETDATE()'),
+                Status: 'Refunded',
+                Note: `Hoàn ${pointsToRefund} điểm từ booking ${bookingId}`
+            }, { transaction });
+
+            // Tính lại tổng tiền booking (cộng lại số tiền đã giảm từ điểm)
+            const pointsDiscountAmount = pointsToRefund * 1000; // 1 điểm = 1000 VND
+            const newTotalAmount = parseFloat(booking.Total_Amount) + pointsDiscountAmount;
+
+            // Cập nhật booking
+            await booking.update({
+                Points_Used: 0,
+                Total_Amount: newTotalAmount
+            }, { transaction });
+
+            // Tạo lịch sử booking
+            await this.models.BookingHistory.create({
+                Booking_ID: bookingId,
+                Date: this.models.sequelize.literal('GETDATE()'),
+                Status: 'Points Removed',
+                Notes: `Đã xóa ${pointsToRefund} điểm khỏi booking. Hoàn lại ${this.formatCurrency(pointsDiscountAmount)}đ`,
+                IsRead: false
+            }, { transaction });
+
+            await transaction.commit();
+
+            logger.info(`Đã xóa thành công ${pointsToRefund} điểm khỏi booking ${bookingId}`);
+
+            return {
+                success: true,
+                message: `Đã xóa thành công ${pointsToRefund} điểm khỏi booking`,
+                booking_id: bookingId,
+                points_refunded: pointsToRefund,
+                discount_amount_removed: pointsDiscountAmount,
+                new_total_amount: newTotalAmount,
+                user_new_points_balance: newTotalPoints
+            };
+
+        } catch (error) {
+            if (transaction && !transaction.finished) {
+                try {
+                    await transaction.rollback();
+                } catch (rollbackError) {
+                    logger.error(`Lỗi khi rollback transaction: ${rollbackError.message}`, rollbackError);
+                }
+            }
+            logger.error(`Lỗi khi xóa điểm khỏi booking ${bookingId}:`, error);
+            if (error instanceof NotFoundError) throw error;
+            throw new AppError('Lỗi khi xóa điểm khỏi booking', 500, error);
         }
     }
 }

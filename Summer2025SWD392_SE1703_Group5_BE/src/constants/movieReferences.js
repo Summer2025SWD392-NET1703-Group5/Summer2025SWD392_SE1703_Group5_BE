@@ -1,11 +1,6 @@
-// src/constants/movieReferences.js
-// Chứa danh sách các giá trị tham chiếu cho phim, bao gồm dữ liệu toàn diện về các quốc gia,
-// công ty sản xuất, nghệ sĩ, đạo diễn nổi tiếng, ngôn ngữ và thể loại phim.
-
 module.exports = {
     // Danh sách diễn viên nổi tiếng Việt Nam và thế giới
     actors: [
-        // Việt Nam
         'Trấn Thành', 'Thái Hòa', 'Trường Giang', 'Ngô Thanh Vân', 'Ninh Dương Lan Ngọc',
         'Kaity Nguyễn', 'Kiều Minh Tuấn', 'Dustin Nguyễn', 'Johnny Trí Nguyễn', 'Isaac',
         'Phương Anh Đào', 'Thu Trang', 'Tiến Luật', 'Hứa Vĩ Văn',
@@ -13,17 +8,18 @@ module.exports = {
         'Dwayne Johnson', 'Leonardo DiCaprio', 'Tom Hanks', 'Robert Downey Jr.', 'Scarlett Johansson',
         'Chris Evans', 'Chris Hemsworth', 'Brad Pitt', 'Angelina Jolie', 'Meryl Streep',
         'Morgan Freeman', 'Keanu Reeves', 'Johnny Depp', 'Will Smith', 'Margot Robbie',
-        'Tom Cruise', 'Zendaya', 'Timothée Chalamet', 'Ryan Reynolds'
-    ,
+        'Tom Cruise', 'Zendaya', 'Timothée Chalamet', 'Ryan Reynolds',
         'Phúc',
         'Ana De Armas',
         'Catalina Sandino Moreno',
         'Asdsad',
-        'Sdd'],
+        'Sdd',
+        'Đang Cập Nhật',
+        'Lindsey Marie Wilson',
+        'Phúcc'],
 
     // Danh sách công ty sản xuất phim lớn
     productionCompanies: [
-        // Việt Nam
         'BHD Star Cineplex', 'Galaxy Studio', 'Lotte Cinema', 'CJ HK Entertainment',
         'Skyline Media', 'HKFilm', 'V-Pictures', 'VAA (Viet Art)',
         // Thế giới
@@ -32,11 +28,11 @@ module.exports = {
         'Sony Pictures', '20th Century Studios', 'DreamWorks Animation', 'A24',
         'Lionsgate', 'Studio Ghibli', 'Netflix', 'Amazon Studios', 'HBO'
     ,
-        'Dsfadsf'],
+        'Dsfadsf',
+        'Tmdb Import'],
 
     // Danh sách đạo diễn nổi tiếng
     directors: [
-        // Việt Nam
         'Victor Vũ', 'Nguyễn Quang Dũng', 'Charlie Nguyễn', 'Phan Gia Nhật Linh',
         'Lê Văn Kiệt', 'Hàm Trần', 'Lý Hải', 'Võ Thanh Hòa',
         // Thế giới
@@ -46,7 +42,9 @@ module.exports = {
         'Greta Gerwig', 'Jordan Peele', 'James Gunn'
     ,
         'Len Wiseman',
-        '222'],
+        '222',
+        'Đang Cập Nhật',
+        'Michael Su'],
 
     // Danh sách ngôn ngữ phổ biến (bao gồm các dạng thuyết minh/phụ đề)
     languages: [
@@ -63,7 +61,9 @@ module.exports = {
         'Ngôn ngữ gốc - Phụ đề Tiếng Việt',
         'Ngôn ngữ gốc - Phụ đề Tiếng Anh'
     ,
-        'Tiếng Anh'],
+        'Tiếng Anh',
+        'Vietsub',
+        'Tiếng Việt'],
 
     // Danh sách quốc gia sản xuất phim phổ biến
     countries: [
@@ -85,7 +85,8 @@ module.exports = {
         'Hồng Kông',
         'Đan Mạch',
         'Mexico'
-    ],
+    ,
+        'Usa'],
 
     // Danh sách đầy đủ các thể loại phim
     genres: [
@@ -113,7 +114,12 @@ module.exports = {
         'Tâm lý'
     ,
         'Hồi Hộp',
-        'Se Gay'],
+        'Se Gay',
+        'Phim Hành Động',
+        'Phim Giả Tượng',
+        'Phim Gây Cấn',
+        'Phim Chính Kịch',
+        'Phim Lãng Mạn'],
 
     // Danh sách xếp hạng độ tuổi theo tiêu chuẩn Việt Nam
     ratings: [
@@ -123,7 +129,6 @@ module.exports = {
         'R',
         'NC-17'
     ],
-
-    // Danh sách trạng thái phim (giữ nguyên)
+        
     statuses: ['Coming Soon', 'Now Showing', 'Ended', 'Cancelled', 'Inactive']
-}; 
+};

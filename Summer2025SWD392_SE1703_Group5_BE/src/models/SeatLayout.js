@@ -13,13 +13,13 @@ module.exports = (sequelize, DataTypes) => {
     Cinema_Room_ID: { type: DataTypes.INTEGER, allowNull: false },
     Row_Label: { type: DataTypes.STRING, allowNull: false },
     Column_Number: { type: DataTypes.INTEGER, allowNull: false },
-    Seat_Type: { type: DataTypes.STRING, defaultValue: 'Regular' },
+    Seat_Type: { type: DataTypes.STRING, defaultValue: 'Thường' },
     Is_Active: { type: DataTypes.BOOLEAN, defaultValue: true }
   }, {
     sequelize,
     modelName: 'SeatLayout',
     tableName: 'Seat_Layout',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return SeatLayout;

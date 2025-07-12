@@ -1,169 +1,225 @@
-// routes/bookingStatisticsRoutes.js
+// routes/bookingExpirationRoutes.js
 const express = require('express');
 const router = express.Router();
-const bookingStatisticsController = require('../controllers/bookingStatisticsController');
+const bookingExpirationController = require('../controllers/bookingExpirationController');
 
-// Import middleware
+// Import middleware từ authMiddleware (đã có sẵn authorizeRoles)
 const { authMiddleware, authorizeRoles } = require('../middlewares/authMiddleware');
 
 // Middleware xác thực cho tất cả routes
 router.use(authMiddleware);
 
-// Routes chỉ dành cho Admin và Staff
-router.use(authorizeRoles('Admin', 'Staff', 'Manager'));
+// Routes chỉ dành cho Admin
+router.use(authorizeRoles('Admin'));
 
 /**
  * @swagger
  * components:
  *   schemas:
- *     BookingStatisticsDTO:
+ *     BookingExpirationResult:
  *       type: object
  *       properties:
- *         startDate:
+ *         bookingId:
+ *           type: integer
+ *           description: ID của booking
+ *         userId:
+ *           type: integer
+ *           description: ID của user
+ *         success:
+ *           type: boolean
+ *           description: Trạng thái xử lý
+ *         originalStatus:
  *           type: string
- *           format: date-time
- *           description: Ngày bắt đầu
- *         endDate:
+ *           description: Trạng thái ban đầu
+ *         pointsRefunded:
+ *           type: integer
+ *           description: Số điểm đã hoàn trả
+ *         message:
  *           type: string
- *           format: date-time
- *           description: Ngày kết thúc
- *         totalBookings:
- *           type: integer
- *           description: Tổng số booking
- *         confirmedBookings:
- *           type: integer
- *           description: Số booking đã xác nhận
- *         cancelledBookings:
- *           type: integer
- *           description: Số booking đã hủy
- *         totalRevenue:
- *           type: number
- *           format: float
- *           description: Tổng doanh thu
- *         averageTicketsPerBooking:
- *           type: number
- *           format: float
- *           description: Trung bình số vé trên mỗi booking
- *         movieStatistics:
- *           type: array
- *           items:
- *             $ref: '#/components/schemas/MovieStatisticsDTO'
- *         roomStatistics:
- *           type: array
- *           items:
- *             $ref: '#/components/schemas/RoomStatisticsDTO'
- *         dailyStatistics:
- *           type: array
- *           items:
- *             $ref: '#/components/schemas/DailyStatisticsDTO'
- *         paymentMethodStatistics:
- *           type: array
- *           items:
- *             $ref: '#/components/schemas/PaymentMethodStatisticsDTO'
+ *           description: Thông báo kết quả
  *     
- *     MovieStatisticsDTO:
+ *     BookingNearExpiration:
  *       type: object
  *       properties:
- *         movieId:
+ *         Booking_ID:
  *           type: integer
- *           description: ID phim
- *         movieName:
+ *           description: ID của booking
+ *         User_ID:
+ *           type: integer
+ *           description: ID của user
+ *         User_Name:
  *           type: string
- *           description: Tên phim
- *         totalBookings:
- *           type: integer
- *           description: Tổng số booking
- *         totalTickets:
- *           type: integer
- *           description: Tổng số vé
- *         totalRevenue:
- *           type: number
- *           format: float
- *           description: Tổng doanh thu
- *         averageTicketsPerBooking:
- *           type: number
- *           format: float
- *           description: Trung bình vé/booking
- *     
- *     RoomStatisticsDTO:
- *       type: object
- *       properties:
- *         roomId:
- *           type: integer
- *           description: ID phòng chiếu
- *         roomName:
+ *           description: Tên người dùng
+ *         User_Email:
  *           type: string
- *           description: Tên phòng chiếu
- *         totalBookings:
- *           type: integer
- *           description: Tổng số booking
- *         totalTickets:
- *           type: integer
- *           description: Tổng số vé
- *         totalRevenue:
- *           type: number
- *           format: float
- *           description: Tổng doanh thu
- *         occupancyRate:
- *           type: number
- *           format: float
- *           description: Tỷ lệ lấp đầy (%)
- *     
- *     DailyStatisticsDTO:
- *       type: object
- *       properties:
- *         date:
- *           type: string
- *           format: date
- *           description: Ngày
- *         totalBookings:
- *           type: integer
- *           description: Tổng booking trong ngày
- *         totalTickets:
- *           type: integer
- *           description: Tổng vé trong ngày
- *         totalRevenue:
- *           type: number
- *           format: float
- *           description: Doanh thu trong ngày
- *     
- *     PaymentMethodStatisticsDTO:
- *       type: object
- *       properties:
- *         paymentMethod:
- *           type: string
- *           description: Phương thức thanh toán
- *         totalBookings:
- *           type: integer
- *           description: Số booking sử dụng phương thức này
- *         totalAmount:
+ *           description: Email người dùng
+ *         Total_Amount:
  *           type: number
  *           format: float
  *           description: Tổng số tiền
- *         percentage:
+ *         Payment_Deadline:
+ *           type: string
+ *           format: date-time
+ *           description: Hạn thanh toán
+ *         Minutes_Left:
+ *           type: integer
+ *           description: Số phút còn lại
+ *     
+ *     ExpirationStats:
+ *       type: object
+ *       properties:
+ *         total_expired:
+ *           type: integer
+ *           description: Tổng số booking quá hạn
+ *         total_amount_lost:
  *           type: number
  *           format: float
- *           description: Tỷ lệ phần trăm
+ *           description: Tổng số tiền mất
+ *         total_points_refunded:
+ *           type: integer
+ *           description: Tổng điểm đã hoàn trả
+ *         date:
+ *           type: string
+ *           format: date
+ *           description: Ngày thống kê
+ *     
+ *     ServiceStatus:
+ *       type: object
+ *       properties:
+ *         isRunning:
+ *           type: boolean
+ *           description: Trạng thái service
+ *         message:
+ *           type: string
+ *           description: Thông báo trạng thái
+ *         currentTime:
+ *           type: string
+ *           format: date-time
+ *           description: Thời gian hiện tại
  *   
  *   securitySchemes:
  *     bearerAuth:
  *       type: http
  *       scheme: bearer
  *       bearerFormat: JWT
+ * 
+ * security:
+ *   - bearerAuth: []
+ * 
+ * tags:
+ *   name: Booking Expiration
+ *   description: API quản lý booking quá hạn thanh toán
  */
 
 /**
  * @swagger
- * /api/booking-statistics:
+ * /api/booking-expiration/check-expired:
  *   get:
- *     summary: Lấy thống kê đặt vé và doanh thu
- *     description: Lấy thống kê tổng quan về đặt vé và doanh thu theo khoảng thời gian (Admin/Staff)
- *     tags: [Booking Statistics]
+ *     summary: Kiểm tra và xử lý booking quá hạn thanh toán
+ *     tags: [Booking Expiration]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Kiểm tra thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Kiểm tra booking quá hạn hoàn tất"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     message:
+ *                       type: string
+ *                       example: "Đã xử lý 3 booking quá hạn"
+ *                     results:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/BookingExpirationResult'
+ *       401:
+ *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/check-expired', bookingExpirationController.checkExpiredBookings);
+
+/**
+ * @swagger
+ * /api/booking-expiration/force-check/{bookingId}:
+ *   get:
+ *     summary: Force check một booking cụ thể
+ *     tags: [Booking Expiration]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của booking cần kiểm tra
+ *         example: 123
+ *     responses:
+ *       200:
+ *         description: Kiểm tra thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Đã xử lý booking 123"
+ *                 data:
+ *                   $ref: '#/components/schemas/BookingExpirationResult'
+ *       400:
+ *         description: Booking chưa quá hạn hoặc không hợp lệ
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: "Booking 123 chưa quá hạn"
+ *       401:
+ *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
+ *       404:
+ *         description: Không tìm thấy booking
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/force-check/:bookingId', bookingExpirationController.forceCheckBooking);
+
+/**
+ * @swagger
+ * /api/booking-expiration/stats:
+ *   get:
+ *     summary: Lấy thống kê booking quá hạn theo khoảng thời gian
+ *     tags: [Booking Expiration]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
  *         name: startDate
+ *         required: true
  *         schema:
  *           type: string
  *           format: date
@@ -171,11 +227,12 @@ router.use(authorizeRoles('Admin', 'Staff', 'Manager'));
  *         example: "2024-01-01"
  *       - in: query
  *         name: endDate
+ *         required: true
  *         schema:
  *           type: string
  *           format: date
  *         description: Ngày kết thúc (YYYY-MM-DD)
- *         example: "2024-12-31"
+ *         example: "2024-01-31"
  *     responses:
  *       200:
  *         description: Lấy thống kê thành công
@@ -186,78 +243,59 @@ router.use(authorizeRoles('Admin', 'Staff', 'Manager'));
  *               properties:
  *                 success:
  *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
+ *                   example: "Lấy thống kê thành công"
  *                 data:
- *                   $ref: '#/components/schemas/BookingStatisticsDTO'
+ *                   type: object
+ *                   properties:
+ *                     period:
+ *                       type: object
+ *                       properties:
+ *                         startDate:
+ *                           type: string
+ *                           format: date
+ *                         endDate:
+ *                           type: string
+ *                           format: date
+ *                     stats:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/ExpirationStats'
  *       400:
- *         description: Tham số không hợp lệ
+ *         description: Thiếu tham số hoặc định dạng ngày không hợp lệ
  *       401:
- *         description: Chưa xác thực
- *       403:
  *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
  *       500:
  *         description: Lỗi server
  */
-router.get('/', bookingStatisticsController.getBookingStatistics);
+router.get('/stats', bookingExpirationController.getExpirationStats);
 
 /**
  * @swagger
- * /api/booking-statistics/all:
+ * /api/booking-expiration/near-expiration:
  *   get:
- *     summary: Lấy tất cả dữ liệu thống kê
- *     description: Lấy tất cả dữ liệu thống kê để FE tự filter theo ngày (Admin/Staff)
- *     tags: [Booking Statistics]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Lấy tất cả thống kê thành công
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 message:
- *                   type: string
- *                 data:
- *                   $ref: '#/components/schemas/BookingStatisticsDTO'
- *       401:
- *         description: Chưa xác thực
- *       403:
- *         description: Không có quyền truy cập
- *       500:
- *         description: Lỗi server
- */
-router.get('/all', bookingStatisticsController.getAllBookingStatistics);
-
-/**
- * @swagger
- * /api/booking-statistics/movies:
- *   get:
- *     summary: Lấy thống kê theo phim
- *     description: Lấy thống kê đặt vé và doanh thu theo từng phim (Admin/Staff)
- *     tags: [Booking Statistics]
+ *     summary: Lấy danh sách booking sắp hết hạn thanh toán
+ *     tags: [Booking Expiration]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
- *         name: startDate
+ *         name: minutes
+ *         required: false
  *         schema:
- *           type: string
- *           format: date
- *         description: Ngày bắt đầu (YYYY-MM-DD)
- *       - in: query
- *         name: endDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày kết thúc (YYYY-MM-DD)
+ *           type: integer
+ *           minimum: 5
+ *           maximum: 120
+ *           default: 30
+ *         description: Số phút trước khi hết hạn để cảnh báo
+ *         example: 30
  *     responses:
  *       200:
- *         description: Lấy thống kê phim thành công
+ *         description: Lấy danh sách thành công
  *         content:
  *           application/json:
  *             schema:
@@ -265,48 +303,45 @@ router.get('/all', bookingStatisticsController.getAllBookingStatistics);
  *               properties:
  *                 success:
  *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
+ *                   example: "Tìm thấy 5 booking sắp hết hạn"
  *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/MovieStatisticsDTO'
+ *                   type: object
+ *                   properties:
+ *                     minutesBefore:
+ *                       type: integer
+ *                       example: 30
+ *                     count:
+ *                       type: integer
+ *                       example: 5
+ *                     bookings:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/BookingNearExpiration'
  *       400:
  *         description: Tham số không hợp lệ
  *       401:
- *         description: Chưa xác thực
- *       403:
  *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
  *       500:
  *         description: Lỗi server
  */
-router.get('/movies', bookingStatisticsController.getMovieStatistics);
+router.get('/near-expiration', bookingExpirationController.getBookingsNearExpiration);
 
 /**
  * @swagger
- * /api/booking-statistics/rooms:
+ * /api/booking-expiration/status:
  *   get:
- *     summary: Lấy thống kê theo phòng chiếu
- *     description: Lấy thống kê đặt vé và doanh thu theo từng phòng chiếu (Admin/Staff)
- *     tags: [Booking Statistics]
+ *     summary: Lấy trạng thái hoạt động của service
+ *     tags: [Booking Expiration]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: startDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày bắt đầu (YYYY-MM-DD)
- *       - in: query
- *         name: endDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày kết thúc (YYYY-MM-DD)
  *     responses:
  *       200:
- *         description: Lấy thống kê phòng chiếu thành công
+ *         description: Lấy trạng thái thành công
  *         content:
  *           application/json:
  *             schema:
@@ -314,48 +349,29 @@ router.get('/movies', bookingStatisticsController.getMovieStatistics);
  *               properties:
  *                 success:
  *                   type: boolean
- *                 message:
- *                   type: string
+ *                   example: true
  *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/RoomStatisticsDTO'
- *       400:
- *         description: Tham số không hợp lệ
+ *                   $ref: '#/components/schemas/ServiceStatus'
  *       401:
- *         description: Chưa xác thực
- *       403:
  *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
  *       500:
  *         description: Lỗi server
  */
-router.get('/rooms', bookingStatisticsController.getRoomStatistics);
+router.get('/status', bookingExpirationController.getServiceStatus);
 
 /**
  * @swagger
- * /api/booking-statistics/daily:
- *   get:
- *     summary: Lấy thống kê theo ngày
- *     description: Lấy thống kê đặt vé và doanh thu theo từng ngày (Admin/Staff)
- *     tags: [Booking Statistics]
+ * /api/booking-expiration/start:
+ *   post:
+ *     summary: Khởi động service kiểm tra booking quá hạn
+ *     tags: [Booking Expiration]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: startDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày bắt đầu (YYYY-MM-DD)
- *       - in: query
- *         name: endDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày kết thúc (YYYY-MM-DD)
  *     responses:
  *       200:
- *         description: Lấy thống kê theo ngày thành công
+ *         description: Khởi động service thành công
  *         content:
  *           application/json:
  *             schema:
@@ -363,48 +379,33 @@ router.get('/rooms', bookingStatisticsController.getRoomStatistics);
  *               properties:
  *                 success:
  *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/DailyStatisticsDTO'
- *       400:
- *         description: Tham số không hợp lệ
+ *                   example: "Service đã được khởi động"
+ *                 isRunning:
+ *                   type: boolean
+ *                   example: true
  *       401:
- *         description: Chưa xác thực
- *       403:
  *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
  *       500:
  *         description: Lỗi server
  */
-router.get('/daily', bookingStatisticsController.getDailyStatistics);
+router.post('/start', bookingExpirationController.startService);
 
 /**
  * @swagger
- * /api/booking-statistics/payment-methods:
- *   get:
- *     summary: Lấy thống kê theo phương thức thanh toán
- *     description: Lấy thống kê đặt vé và doanh thu theo phương thức thanh toán (Admin/Staff)
- *     tags: [Booking Statistics]
+ * /api/booking-expiration/stop:
+ *   post:
+ *     summary: Dừng service kiểm tra booking quá hạn
+ *     tags: [Booking Expiration]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: startDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày bắt đầu (YYYY-MM-DD)
- *       - in: query
- *         name: endDate
- *         schema:
- *           type: string
- *           format: date
- *         description: Ngày kết thúc (YYYY-MM-DD)
  *     responses:
  *       200:
- *         description: Lấy thống kê phương thức thanh toán thành công
+ *         description: Dừng service thành công
  *         content:
  *           application/json:
  *             schema:
@@ -412,21 +413,20 @@ router.get('/daily', bookingStatisticsController.getDailyStatistics);
  *               properties:
  *                 success:
  *                   type: boolean
+ *                   example: true
  *                 message:
  *                   type: string
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/PaymentMethodStatisticsDTO'
- *       400:
- *         description: Tham số không hợp lệ
+ *                   example: "Service đã được dừng"
+ *                 isRunning:
+ *                   type: boolean
+ *                   example: false
  *       401:
- *         description: Chưa xác thực
- *       403:
  *         description: Không có quyền truy cập
+ *       403:
+ *         description: Chỉ Admin mới có quyền truy cập
  *       500:
  *         description: Lỗi server
  */
-router.get('/payment-methods', bookingStatisticsController.getPaymentMethodStatistics);
+router.post('/stop', bookingExpirationController.stopService);
 
 module.exports = router;

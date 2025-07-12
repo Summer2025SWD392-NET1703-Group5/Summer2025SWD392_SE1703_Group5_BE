@@ -13,7 +13,6 @@ module.exports = (sequelize, DataTypes) => {
       TicketBooking.hasMany(models.Payment, { foreignKey: 'Booking_ID', as: 'Payments' });
       TicketBooking.hasMany(models.BookingHistory, { foreignKey: 'Booking_ID', as: 'BookingHistories' });
       TicketBooking.hasMany(models.PromotionUsage, { foreignKey: 'Booking_ID', as: 'PromotionUsages' });
-      TicketBooking.hasMany(models.Seat, { foreignKey: 'Booking_ID', as: 'Seats' });
     }
   }
   TicketBooking.init({
@@ -32,7 +31,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'TicketBooking',
     tableName: 'Ticket_Bookings',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return TicketBooking;

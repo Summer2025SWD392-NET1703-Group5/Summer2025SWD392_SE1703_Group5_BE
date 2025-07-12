@@ -169,7 +169,25 @@ const { seatLayoutValidation } = require('../middlewares/validation');
  *           minItems: 1
  *           description: Danh sách ID layout ghế cần xóa
  *           example: [1, 2, 3, 4, 5]
- *     
+ *
+ *     BulkToggleLayouts:
+ *       type: object
+ *       required:
+ *         - LayoutIds
+ *       properties:
+ *         LayoutIds:
+ *           type: array
+ *           items:
+ *             type: integer
+ *           minItems: 1
+ *           description: Danh sách ID layout ghế cần ẩn/hiện
+ *           example: [1, 2, 3, 4, 5]
+ *         IsActive:
+ *           type: boolean
+ *           description: Trạng thái hiển thị (true = hiện, false = ẩn). Mặc định false nếu không cung cấp
+ *           example: false
+ *           default: false
+ *
  *     ApiResponse:
  *       type: object
  *       properties:
@@ -219,6 +237,138 @@ const { seatLayoutValidation } = require('../middlewares/validation');
  *         description: Lỗi server
  */
 router.get('/room/:roomId', seatLayoutController.getSeatLayout);
+
+/**
+ * @swagger
+ * /api/seat-layouts/layout-history/{roomId}:
+ *   get:
+ *     summary: Lấy lịch sử thay đổi sơ đồ ghế của phòng (Chỉ Admin/Manager)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin hoặc Manager xem lịch sử thay đổi sơ đồ ghế của một phòng chiếu.
+ *       Kết quả trả về bao gồm tất cả các lần thay đổi cấu hình ghế, thời gian thay đổi, và người thực hiện thay đổi.
+ *       Đây là công cụ quan trọng để theo dõi và kiểm toán các thay đổi về cấu trúc phòng chiếu.
+ *     tags: [SeatLayout]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: roomId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của phòng chiếu
+ *     responses:
+ *       200:
+ *         description: Lịch sử thay đổi sơ đồ ghế
+ *       401:
+ *         description: Không có quyền truy cập (chưa đăng nhập)
+ *       403:
+ *         description: Không có quyền thực hiện hành động này
+ *       404:
+ *         description: Không tìm thấy phòng chiếu
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/layout-history/:roomId', authMiddleware, authorizeRoles('Admin', 'Manager'), seatLayoutController.getSeatLayoutHistory);
+
+/**
+ * @swagger
+ * /api/seat-layouts/latest/{roomId}:
+ *   get:
+ *     summary: Lấy sơ đồ ghế mới nhất của phòng chiếu (Public)
+ *     description: >
+ *       API này cho phép tất cả người dùng xem sơ đồ ghế mới nhất của một phòng chiếu cụ thể.
+ *       Khác với API lấy toàn bộ sơ đồ ghế, API này chỉ trả về cấu hình mới nhất đang được áp dụng.
+ *       Kết quả bao gồm vị trí và loại ghế của cấu hình hiện tại.
+ *     tags: [SeatLayout]
+ *     parameters:
+ *       - in: path
+ *         name: roomId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của phòng chiếu
+ *     responses:
+ *       200:
+ *         description: Sơ đồ ghế mới nhất
+ *       404:
+ *         description: Không tìm thấy sơ đồ ghế
+ *       500:
+ *         description: Lỗi server
+ */
+// Temporarily commenting out this route as the controller method doesn't exist
+// router.get('/latest/:roomId', seatLayoutController.getLatestLayoutForRoom);
+
+/**
+ * @swagger
+ * /api/seat-layouts/{layoutId}/seat-type:
+ *   put:
+ *     summary: Cập nhật loại ghế cho một ghế cụ thể (Chỉ Admin/Manager)
+ *     description: >
+ *       API này cho phép người dùng có quyền Admin hoặc Manager cập nhật loại ghế và trạng thái hoạt động 
+ *       cho một vị trí ghế cụ thể trong sơ đồ phòng chiếu. Đây là công cụ để quản lý và điều chỉnh các loại 
+ *       ghế trong rạp phim (ví dụ: nâng cấp từ ghế thường lên ghế VIP).
+ *     tags: [SeatLayout]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: layoutId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của layout ghế cần cập nhật
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UpdateSeatType'
+ *           example:
+ *             SeatType: "VIP"
+ *             IsActive: true
+ *     responses:
+ *       200:
+ *         description: Cập nhật loại ghế thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Cập nhật loại ghế thành công"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     layout_id:
+ *                       type: integer
+ *                       example: 123
+ *                     row_label:
+ *                       type: string
+ *                       example: "A"
+ *                     column_number:
+ *                       type: integer
+ *                       example: 5
+ *                     seat_type:
+ *                       type: string
+ *                       example: "VIP"
+ *                     is_active:
+ *                       type: boolean
+ *                       example: true
+ *       401:
+ *         description: Không có quyền truy cập
+ *       403:
+ *         description: Không có quyền thực hiện hành động này
+ *       404:
+ *         description: Không tìm thấy layout ghế
+ *       500:
+ *         description: Lỗi server
+ */
+router.put('/:layoutId/seat-type', authMiddleware, seatLayoutController.updateSeatType);
 
 /**
  * @swagger
@@ -412,17 +562,15 @@ router.get('/seat-types', authMiddleware, seatLayoutController.getSeatTypes);
  */
 router.post('/bulk/:roomId', authMiddleware, seatLayoutController.bulkConfigureSeatLayout);
 
-
-
 /**
  * @swagger
  * /api/seat-layouts/bulk-delete:
  *   delete:
- *     summary: Xóa mềm hàng loạt layout ghế (Chỉ Admin/Manager)
+ *     summary: Ẩn/Hiện hàng loạt layout ghế (Chỉ Admin/Manager)
  *     description: >
- *       API này cho phép người dùng có quyền Admin hoặc Manager vô hiệu hóa nhiều vị trí ghế cùng một lúc
- *       bằng cách thực hiện xóa mềm (soft delete). Các ghế bị xóa mềm sẽ vẫn tồn tại trong cơ sở dữ liệu
- *       nhưng không còn hiển thị trong sơ đồ ghế hoặc có thể được đặt vé.
+ *       API này cho phép người dùng có quyền Admin hoặc Manager ẩn hoặc hiện nhiều vị trí ghế cùng một lúc
+ *       bằng cách thay đổi trạng thái Is_Active. Các ghế bị ẩn (Is_Active = false) sẽ vẫn tồn tại trong cơ sở dữ liệu
+ *       nhưng không còn hiển thị trong sơ đồ ghế hoặc có thể được đặt vé. Có thể hiện lại bằng cách set Is_Active = true.
  *     tags: [SeatLayout]
  *     security:
  *       - bearerAuth: []
@@ -431,12 +579,25 @@ router.post('/bulk/:roomId', authMiddleware, seatLayoutController.bulkConfigureS
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/BulkDeleteLayouts'
- *           example:
- *             LayoutIds: [1, 2, 3, 4, 5]
+ *             $ref: '#/components/schemas/BulkToggleLayouts'
+ *           examples:
+ *             hide_seats:
+ *               summary: Ẩn ghế
+ *               value:
+ *                 LayoutIds: [1, 2, 3, 4, 5]
+ *                 IsActive: false
+ *             show_seats:
+ *               summary: Hiện ghế
+ *               value:
+ *                 LayoutIds: [1, 2, 3, 4, 5]
+ *                 IsActive: true
+ *             default_hide:
+ *               summary: Mặc định ẩn ghế (backward compatibility)
+ *               value:
+ *                 LayoutIds: [1, 2, 3, 4, 5]
  *     responses:
  *       200:
- *         description: Xóa mềm layout ghế thành công
+ *         description: Ẩn/hiện layout ghế thành công
  *         content:
  *           application/json:
  *             schema:
@@ -447,8 +608,8 @@ router.post('/bulk/:roomId', authMiddleware, seatLayoutController.bulkConfigureS
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: "Đã xóa mềm 5 layout ghế thành công"
- *                 deleted_count:
+ *                   example: "Đã ẩn/hiện 5 layout ghế thành công"
+ *                 toggled_count:
  *                   type: integer
  *                   example: 5
  *                 deleted_layouts:
@@ -478,6 +639,108 @@ router.post('/bulk/:roomId', authMiddleware, seatLayoutController.bulkConfigureS
  */
 router.delete('/bulk-delete', authMiddleware, seatLayoutController.softDeleteSeatLayouts);
 
-
+/**
+ * @swagger
+ * /api/seat-layouts/room/{roomId}/usage-stats:
+ *   get:
+ *     summary: Lấy thống kê sử dụng ghế theo phòng (Chỉ Admin/Manager/Staff)
+ *     description: >
+ *       API này cung cấp dữ liệu thống kê về tần suất sử dụng của từng ghế trong phòng chiếu trong một 
+ *       khoảng thời gian nhất định. Kết quả bao gồm các ghế được đặt nhiều nhất và ít nhất, giúp quản lý 
+ *       có cái nhìn tổng quan về mô hình sử dụng ghế để tối ưu hóa bố trí và giá vé.
+ *     tags: [SeatLayout]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: roomId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của phòng chiếu
+ *       - in: query
+ *         name: days
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *         description: Số ngày cần lấy thống kê (mặc định 30 ngày)
+ *     responses:
+ *       200:
+ *         description: Thống kê sử dụng ghế
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Lấy thống kê ghế thành công"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     room_id:
+ *                       type: integer
+ *                       example: 1
+ *                     room_name:
+ *                       type: string
+ *                       example: "Screen 1"
+ *                     period_days:
+ *                       type: integer
+ *                       example: 30
+ *                     total_bookings:
+ *                       type: integer
+ *                       example: 254
+ *                     seat_usage:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           seat:
+ *                             type: string
+ *                             example: "A1"
+ *                           count:
+ *                             type: integer
+ *                             example: 15
+ *                           row:
+ *                             type: string
+ *                             example: "A"
+ *                           number:
+ *                             type: integer
+ *                             example: 1
+ *                     most_booked_seats:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           seat:
+ *                             type: string
+ *                             example: "E5"
+ *                           count:
+ *                             type: integer
+ *                             example: 25
+ *                     least_booked_seats:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           seat:
+ *                             type: string
+ *                             example: "A10"
+ *                           count:
+ *                             type: integer
+ *                             example: 2
+ *       401:
+ *         description: Không có quyền truy cập
+ *       403:
+ *         description: Không có quyền thực hiện hành động này
+ *       404:
+ *         description: Không tìm thấy phòng chiếu
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/room/:roomId/usage-stats', authMiddleware, seatLayoutController.getSeatUsageStats);
 
 module.exports = router;

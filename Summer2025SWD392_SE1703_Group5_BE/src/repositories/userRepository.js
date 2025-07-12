@@ -1,8 +1,7 @@
 'use strict';
 
-const { User } = require('../models');
+const { getConnection, sql } = require('../config/database');
 const logger = require('../utils/logger');
-const { Op } = require('sequelize');
 
 class UserRepository {
     constructor() {
@@ -10,85 +9,224 @@ class UserRepository {
     }
 
     async emailExists(email) {
-        return await User.count({ where: { Email: email } }) > 0;
+        try {
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('email', sql.NVarChar, email)
+                .query('SELECT COUNT(*) AS count FROM Users WHERE Email = @email');
+
+            return result.recordset[0].count > 0;
+        } catch (error) {
+            this.logger.error(`Error in emailExists: ${error.message}`);
+            throw error;
+        }
     }
 
     async userNameExists(userName) {
-        return await User.count({ where: { Full_Name: userName } }) > 0;
+        try {
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('userName', sql.NVarChar, userName)
+                .query('SELECT COUNT(*) AS count FROM Users WHERE Full_Name = @userName');
+
+            return result.recordset[0].count > 0;
+        } catch (error) {
+            this.logger.error(`Error in userNameExists: ${error.message}`);
+            throw error;
+        }
     }
 
     async getByEmail(email) {
-        return await User.findOne({ where: { Email: email } });
+        try {
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('email', sql.NVarChar, email)
+                .query('SELECT * FROM Users WHERE Email = @email');
+
+            return result.recordset[0] || null;
+        } catch (error) {
+            this.logger.error(`Error in getByEmail: ${error.message}`);
+            throw error;
+        }
     }
 
     async findByEmail(email) {
-        return await User.findOne({ where: { Email: email } });
+        return this.getByEmail(email);
     }
 
     async getByPhoneNumber(phoneNumber) {
-        return await User.findOne({ where: { Phone_Number: phoneNumber } });
+        try {
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('phoneNumber', sql.NVarChar, phoneNumber)
+                .query('SELECT * FROM Users WHERE Phone_Number = @phoneNumber');
+
+            return result.recordset[0] || null;
+        } catch (error) {
+            this.logger.error(`Error in getByPhoneNumber: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async findByPhoneNumber(phoneNumber) {
+        try {
+            this.logger.info(`[UserRepository.findByPhoneNumber] Searching for user with phone: ${phoneNumber}`);
+
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('phoneNumber', sql.NVarChar, phoneNumber)
+                .query('SELECT * FROM Users WHERE Phone_Number = @phoneNumber');
+
+            const user = result.recordset[0] || null;
+            this.logger.info(`[UserRepository.findByPhoneNumber] Result: ${user ? `Found user ${user.Email}` : 'User not found'}`);
+
+            return user;
+        } catch (error) {
+            this.logger.error(`[UserRepository.findByPhoneNumber] Error: ${error.message}`);
+            throw error;
+        }
     }
 
     async isPhoneNumberExist(phoneNumber, excludeUserId = null) {
         if (!phoneNumber) return false;
 
-        if (excludeUserId) {
-            return await User.count({
-                where: {
-                    Phone_Number: phoneNumber,
-                    User_ID: { [Op.ne]: excludeUserId },
-                },
-            }) > 0;
-        } else {
-            return await User.count({ where: { Phone_Number: phoneNumber } }) > 0;
+        try {
+            const pool = await getConnection();
+            let query = 'SELECT COUNT(*) AS count FROM Users WHERE Phone_Number = @phoneNumber';
+            const request = pool.request().input('phoneNumber', sql.NVarChar, phoneNumber);
+
+            if (excludeUserId) {
+                query += ' AND User_ID <> @excludeUserId';
+                request.input('excludeUserId', sql.Int, excludeUserId);
+            }
+
+            const result = await request.query(query);
+            return result.recordset[0].count > 0;
+        } catch (error) {
+            this.logger.error(`Error in isPhoneNumberExist: ${error.message}`);
+            throw error;
         }
     }
 
     async getByExactEmail(email) {
-        this.logger.info(`Searching for user with exact email: ${email}`);
+        try {
+            this.logger.info(`Searching for user with exact email: ${email}`);
 
-        const user = await User.findOne({ where: { Email: email } });
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('email', sql.NVarChar, email)
+                .query('SELECT * FROM Users WHERE Email = @email');
 
-        if (!user) {
-            this.logger.warn(`No user found with exact email: ${email}`);
+            const user = result.recordset[0] || null;
 
-            const username = email.split('@')[0];
-            const similarEmails = await User.findAll({
-                where: { Email: { [Op.like]: `%${username}%` } },
-                attributes: ['User_ID', 'Email'],
-            });
+            if (!user) {
+                this.logger.warn(`No user found with exact email: ${email}`);
 
-            if (similarEmails.length > 0) {
-                this.logger.warn(`Found ${similarEmails.length} similar emails:`);
-                similarEmails.forEach(item => {
-                    this.logger.warn(`ID: ${item.User_ID}, Email: ${item.Email}`);
-                });
+                const username = email.split('@')[0];
+                const similarResult = await pool.request()
+                    .input('username', sql.NVarChar, `%${username}%`)
+                    .query('SELECT User_ID, Email FROM Users WHERE Email LIKE @username');
+
+                const similarEmails = similarResult.recordset;
+
+                if (similarEmails.length > 0) {
+                    this.logger.warn(`Found ${similarEmails.length} similar emails:`);
+                    similarEmails.forEach(item => {
+                        this.logger.warn(`ID: ${item.User_ID}, Email: ${item.Email}`);
+                    });
+                }
+            } else {
+                this.logger.info(`Found user with ID: ${user.User_ID}, Email: ${user.Email}`);
             }
-        } else {
-            this.logger.info(`Found user with ID: ${user.User_ID}, Email: ${user.Email}`);
-        }
 
-        return user;
+            return user;
+        } catch (error) {
+            this.logger.error(`Error in getByExactEmail: ${error.message}`);
+            throw error;
+        }
     }
 
     async findById(id) {
-        return await User.findByPk(id);
+        try {
+            const pool = await getConnection();
+            const result = await pool.request()
+                .input('id', sql.Int, id)
+                .query('SELECT * FROM Users WHERE User_ID = @id');
+
+            return result.recordset[0] || null;
+        } catch (error) {
+            this.logger.error(`Error in findById: ${error.message}`);
+            throw error;
+        }
     }
 
     async getById(id) {
-        return await User.findByPk(id);
+        return this.findById(id);
     }
 
     async getAll() {
-        return await User.findAll();
+        try {
+            const pool = await getConnection();
+            const result = await pool.request()
+                .query('SELECT * FROM Users');
+
+            return result.recordset;
+        } catch (error) {
+            this.logger.error(`Error in getAll: ${error.message}`);
+            throw error;
+        }
     }
 
     async update(userId, updateData) {
-        const user = await User.findByPk(userId);
-        if (!user) return 0;
+        try {
+            // Kiểm tra xem user có tồn tại không
+            const pool = await getConnection();
+            const checkResult = await pool.request()
+                .input('userId', sql.Int, userId)
+                .query('SELECT COUNT(*) AS count FROM Users WHERE User_ID = @userId');
 
-        await user.update(updateData);
-        return 1;
+            if (checkResult.recordset[0].count === 0) {
+                return 0;
+            }
+
+            // Xây dựng câu lệnh UPDATE động
+            const request = pool.request().input('userId', sql.Int, userId);
+            const setClauses = [];
+
+            Object.keys(updateData).forEach(key => {
+                let paramType;
+                switch (key) {
+                    case 'User_ID':
+                        paramType = sql.Int;
+                        break;
+                    case 'Birth_Date':
+                    case 'Created_At':
+                    case 'Updated_At':
+                    case 'Last_Login':
+                        paramType = sql.DateTime;
+                        break;
+                    case 'Points':
+                        paramType = sql.Int;
+                        break;
+                    default:
+                        paramType = sql.NVarChar;
+                }
+
+                request.input(key, paramType, updateData[key]);
+                setClauses.push(`${key} = @${key}`);
+            });
+
+            // Updated_At field doesn't exist in the User model
+            // Removed code that was causing the error
+
+            const query = `UPDATE Users SET ${setClauses.join(', ')} WHERE User_ID = @userId`;
+            const result = await request.query(query);
+
+            return result.rowsAffected[0];
+        } catch (error) {
+            this.logger.error(`Error in update: ${error.message}`);
+            throw error;
+        }
     }
 }
 

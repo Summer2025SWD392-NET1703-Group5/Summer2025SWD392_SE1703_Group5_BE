@@ -3,13 +3,11 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-
 // Tạo thư mục temp nếu chưa có
 const tempDir = path.join(process.cwd(), 'uploads', 'temp');
 if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
 }
-
 
 // Cấu hình multer cho upload file
 const storage = multer.diskStorage({
@@ -23,11 +21,9 @@ const storage = multer.diskStorage({
     }
 });
 
-
 // Kiểm tra loại file
 const fileFilter = (req, file, cb) => {
     const allowedTypes = (process.env.ALLOWED_FILE_TYPES || 'image/jpeg,image/jpg,image/png,image/gif,image/webp').split(',');
-
 
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
@@ -35,7 +31,6 @@ const fileFilter = (req, file, cb) => {
         cb(new Error('Chỉ cho phép upload file hình ảnh (JPEG, PNG, GIF, WebP)!'), false);
     }
 };
-
 
 const upload = multer({
     storage: storage,
@@ -45,8 +40,4 @@ const upload = multer({
     fileFilter: fileFilter
 });
 
-
 module.exports = upload;
-
-
-

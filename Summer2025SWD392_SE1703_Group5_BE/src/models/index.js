@@ -121,7 +121,10 @@ console.log('[models/index.js] Sequelize models initialized and associated.');
 // Đồng bộ hóa models với database
 if (process.env.NODE_ENV !== 'production') {
     console.log('[models/index.js] Syncing database models in non-production environment...');
-    sequelize.sync({ alter: true })
+    sequelize.sync({
+        alter: false,
+        logging: false // Tắt logging SQL queries
+    })
         .then(() => {
             console.log('[models/index.js] Database synchronized successfully.');
         })
@@ -129,5 +132,8 @@ if (process.env.NODE_ENV !== 'production') {
             console.error('[models/index.js] Error synchronizing database:', err);
         });
 }
+
+// Tắt logging SQL queries mặc định cho tất cả các hoạt động khác
+sequelize.options.logging = false;
 
 module.exports = db; 

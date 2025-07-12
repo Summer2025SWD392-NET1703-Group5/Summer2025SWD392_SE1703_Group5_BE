@@ -13,6 +13,8 @@ const {
   TicketPricing,
   Promotion,        // Thêm
   PromotionUsage,
+  UserPoints,
+  PointsRedemption,
   sequelize
 } = require('../models');
 const logger = require('../utils/logger');
@@ -54,6 +56,45 @@ class BookingService {
     } catch (error) {
       logger.warn('Failed to initialize PayOSService in BookingService, will initialize on-demand', error.message);
     }
+  }
+  
+  /**
+   * Format thời gian để tránh vấn đề UTC - sử dụng cách xử lý giống database.js (raw SQL)
+   * @param {*} timeValue - Giá trị thời gian cần format (string, Date, hoặc SQL time object)
+   * @returns {string} - Chuỗi thời gian đã được format
+   */
+  formatTimeFromShowtime(timeValue) {
+    if (!timeValue) return null;
+    
+    // Nếu là chuỗi thời gian (HH:MM:SS)
+    if (typeof timeValue === 'string' && timeValue.includes(':')) {
+      // Nếu chuỗi thời gian đã có định dạng HH:MM:SS, giữ nguyên
+      if (timeValue.split(':').length === 3) {
+        return timeValue;
+      }
+      // Nếu chỉ có HH:MM, thêm :00 vào cuối
+      return `${timeValue}:00`;
+    }
+    
+    // Nếu là đối tượng SQL Server time
+    if (typeof timeValue === 'object' && timeValue !== null && timeValue.hours !== undefined) {
+      const hours = String(timeValue.hours).padStart(2, '0');
+      const minutes = String(timeValue.minutes || 0).padStart(2, '0');
+      const seconds = String(timeValue.seconds || 0).padStart(2, '0');
+      return `${hours}:${minutes}:${seconds}`;
+    }
+    
+    // Nếu là đối tượng Date
+    if (timeValue instanceof Date) {
+      // Sử dụng getUTCHours/getUTCMinutes/getUTCSeconds để lấy giờ UTC
+      // thay vì toTimeString() để tránh vấn đề múi giờ
+      const hours = String(timeValue.getUTCHours()).padStart(2, '0');
+      const minutes = String(timeValue.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(timeValue.getUTCSeconds()).padStart(2, '0');
+      return `${hours}:${minutes}:${seconds}`;
+    }
+    
+    return timeValue;
   }
 
   /**
@@ -154,22 +195,21 @@ class BookingService {
       // OPTIMIZATION 4: Format tất cả bookings song song
       const formattedBookings = bookings.map(booking => {
         const seats = seatsByBooking.get(booking.Booking_ID) || [];
-        const seatInfo = seats.length > 0 ? seats.join(', ') : "Đang tải thông tin ghế...";
+        const seatInfo = seats.length > 0 ? seats.join(', ') : "N/A";
         const paymentMethod = paymentsByBooking.get(booking.Booking_ID) || null;
 
-        // OPTIMIZATION 5: Format thời gian hiệu quả hơn
+        // OPTIMIZATION 5: Format thời gian hiệu quả hơn - Fix timezone issue
         let formattedStartTime = null;
         if (booking.Showtime?.Start_Time) {
           const startTime = booking.Showtime.Start_Time;
           if (typeof startTime === 'string') {
             // Nếu đã là string, chỉ cần extract HH:MM
             formattedStartTime = startTime.includes(':') ? startTime.split(':').slice(0, 2).join(':') : startTime;
-          } else {
-            // Nếu là Date object
-            formattedStartTime = new Date(startTime).toLocaleTimeString('vi-VN', { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            });
+          } else if (startTime instanceof Date) {
+            // Nếu là Date object, sử dụng UTC để tránh timezone offset
+            const hours = startTime.getUTCHours().toString().padStart(2, '0');
+            const minutes = startTime.getUTCMinutes().toString().padStart(2, '0');
+            formattedStartTime = `${hours}:${minutes}`;
           }
         }
 
@@ -293,20 +333,21 @@ class BookingService {
       // OPTIMIZATION 4: Map tất cả bookings song song
       const formattedBookings = bookings.map(booking => {
         const seats = seatsByBooking.get(booking.Booking_ID) || [];
-        const seatInfo = seats.length > 0 ? seats.join(', ') : "Không có thông tin ghế";
+        const seatInfo = seats.length > 0 ? seats.join(', ') : "N/A";
         const paymentMethod = paymentsByBooking.get(booking.Booking_ID) || null;
 
-        // OPTIMIZATION 5: Format thời gian hiệu quả
+        // OPTIMIZATION 5: Format thời gian hiệu quả - Fix timezone issue
         let formattedStartTime = null;
         if (booking.Showtime?.Start_Time) {
           const startTime = booking.Showtime.Start_Time;
           if (typeof startTime === 'string') {
+            // Nếu đã là string, chỉ cần extract HH:MM
             formattedStartTime = startTime.includes(':') ? startTime.split(':').slice(0, 2).join(':') : startTime;
-          } else {
-            formattedStartTime = new Date(startTime).toLocaleTimeString('vi-VN', { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            });
+          } else if (startTime instanceof Date) {
+            // Nếu là Date object, sử dụng UTC để tránh timezone offset
+            const hours = startTime.getUTCHours().toString().padStart(2, '0');
+            const minutes = startTime.getUTCMinutes().toString().padStart(2, '0');
+            formattedStartTime = `${hours}:${minutes}`;
           }
         }
 
@@ -352,9 +393,9 @@ class BookingService {
     let transaction = null;
 
     try {
-      // Initialize transaction
+      // Bước 1: Khởi tạo transaction
       transaction = await sequelize.transaction();
-      logger.info(`Bắt đầu tạo đặt vé mới cho người dùng ${userId}`, { bookingData });
+      logger.info(`Bắt đầu tạo đơn đặt vé cho người dùng ${userId}`);
 
       // Kiểm tra xem người dùng đã có booking nào đang pending chưa
       const pendingBookingCheck = await this.checkPendingBooking(userId, transaction);
@@ -370,7 +411,7 @@ class BookingService {
 
         // Tạo thông báo lỗi chi tiết
         const error = new Error(
-          `Bạn đang có một đơn đặt vé chưa thanh toán cho phim "${pendingInfo.MovieName}" ${remainingTime}. ` +
+          `Bạn đang có một đơn đặt vé chưa thanh toán cho phim "${pendingInfo.Movie_Name}" ${remainingTime}. ` +
           `Vui lòng thanh toán hoặc hủy đơn đặt vé hiện tại trước khi đặt vé mới.`
         );
 
@@ -386,17 +427,28 @@ class BookingService {
 
       // Bước 1: Chuẩn hóa dữ liệu đầu vào để phù hợp với logic hiện tại
       const normalizedBookingData = {
-        showtimeId: bookingData.Showtime_ID || bookingData.showtimeId,
-        selectedSeats: bookingData.layoutSeatIds || bookingData.selectedSeats || [],
-        promotionId: bookingData.Promotion_ID || bookingData.promotionId,
-        paymentMethod: bookingData.Payment_Method || bookingData.paymentMethod
+        showtimeId: bookingData.showtimeId || bookingData.showtime_id || bookingData.Showtime_ID,
+        selectedSeats: bookingData.selectedSeats || bookingData.selected_seats || bookingData.layoutSeatIds || [],
+        promotionId: bookingData.promotionId || bookingData.promotion_id || bookingData.Promotion_ID || null,
+        paymentMethod: bookingData.paymentMethod || bookingData.payment_method || bookingData.Payment_Method || null,
+        pointsToUse: bookingData.pointsToUse || bookingData.points_to_use || bookingData.Points_To_Use || 0
       };
 
-      // Bước 2: Validate thông tin suất chiếu
+      logger.info(`Dữ liệu booking sau khi chuẩn hóa: ${JSON.stringify(normalizedBookingData)}`);
+
+      // Bước 2: Lấy thông tin suất chiếu
       const showtime = await Showtime.findByPk(normalizedBookingData.showtimeId, {
         include: [
-          { model: Movie, as: 'Movie' },
-          { model: CinemaRoom, as: 'CinemaRoom' }
+          {
+            model: Movie,
+            as: 'Movie',
+            attributes: ['Movie_ID', 'Movie_Name']
+          },
+          {
+            model: CinemaRoom,
+            as: 'CinemaRoom',
+            attributes: ['Cinema_Room_ID', 'Room_Name', 'Room_Type']
+          }
         ],
         transaction
       });
@@ -410,23 +462,49 @@ class BookingService {
       }
 
       // Bước 3: Lấy thông tin ghế được chọn
+      // Thêm showtime_id vào mỗi layout để sử dụng khi tính giá
+      const enhancedSelectedSeats = normalizedBookingData.selectedSeats.map(seatId => {
+        return {
+          layout_id: seatId,
+          showtime_id: normalizedBookingData.showtimeId,
+          Showtime_ID: normalizedBookingData.showtimeId // Thêm cả dạng PascalCase
+        };
+      });
+      
       const seatsWithLayouts = await this.createOrUpdateSeats(
-        normalizedBookingData.selectedSeats,
+        enhancedSelectedSeats,
         normalizedBookingData.showtimeId,
         null, // bookingId chưa có, sẽ được tạo sau
         transaction
       );
 
-      const seatLayouts = seatsWithLayouts.map(seatWithLayout => seatWithLayout.layout);
+      const seatLayouts = seatsWithLayouts.map(seatWithLayout => {
+        // Thêm showtime_id vào mỗi layout để sử dụng khi tính giá
+        const layout = seatWithLayout.layout;
+        layout.showtime_id = normalizedBookingData.showtimeId;
+        layout.Showtime_ID = normalizedBookingData.showtimeId; // Thêm cả dạng PascalCase
+        return layout;
+      });
 
       // Bước 4: Tính giá tiền dựa trên loại ghế và phòng
       const roomType = showtime.CinemaRoom.Room_Type;
+      
+      // Lưu thông tin thời gian suất chiếu để sử dụng khi tính giá
+      // Chuẩn hóa định dạng thời gian để tránh lỗi UTC
+      const normalizedStartTime = this.formatTimeFromShowtime(showtime.Start_Time);
+      
+      const showtimeInfo = {
+        showDate: showtime.Show_Date,
+        startTime: normalizedStartTime,
+        showtimeId: showtime.Showtime_ID
+      };
 
       // Sử dụng phương thức calculateTotalAmount đã được cập nhật để sử dụng pricingService
       const priceCalculation = await this.calculateTotalAmount(
         seatLayouts,
         roomType,
-        transaction
+        transaction,
+        showtimeInfo // Truyền thông tin suất chiếu vào hàm tính giá
       );
 
       // Lấy kết quả tính toán
@@ -434,6 +512,45 @@ class BookingService {
       let totalAmount = priceCalculation.totalAmount;
 
       logger.info(`Đã tính tổng tiền: ${totalAmount} cho đơn đặt vé với ${seatLayouts.length} ghế`);
+
+      // Xử lý điểm tích lũy nếu có
+      let pointsToUse = parseInt(normalizedBookingData.pointsToUse) || 0;
+      let discountAmount = 0;
+
+      if (pointsToUse > 0) {
+        logger.info(`Xử lý sử dụng ${pointsToUse} điểm tích lũy để giảm giá`);
+        
+        // Kiểm tra giới hạn điểm tối đa (50% tổng tiền)
+        const maxPointsAllowed = Math.floor(totalAmount * 0.5);
+        if (pointsToUse > maxPointsAllowed) {
+          logger.warn(`Điểm sử dụng ${pointsToUse} vượt quá giới hạn 50% (${maxPointsAllowed}), điều chỉnh xuống ${maxPointsAllowed}`);
+          pointsToUse = maxPointsAllowed;
+        }
+
+        // Kiểm tra số dư điểm của người dùng
+        const userPoints = await UserPoints.findOne({
+          where: { user_id: userId },
+          transaction
+        });
+
+        if (!userPoints || userPoints.total_points < pointsToUse) {
+          const availablePoints = userPoints ? userPoints.total_points : 0;
+          logger.warn(`Không đủ điểm: Yêu cầu ${pointsToUse}, hiện có ${availablePoints}`);
+          throw new Error(`Số dư điểm không đủ. Hiện có: ${availablePoints}, Yêu cầu: ${pointsToUse}`);
+        }
+
+        // Tính số tiền giảm giá (1 điểm = 1 VND)
+        discountAmount = pointsToUse;
+        
+        // Trừ điểm người dùng
+        userPoints.total_points -= pointsToUse;
+        await userPoints.save({ transaction });
+        
+        // Cập nhật tổng tiền sau khi trừ điểm
+        totalAmount -= discountAmount;
+        
+        logger.info(`Đã sử dụng ${pointsToUse} điểm để giảm ${discountAmount} VND. Tổng tiền sau giảm: ${totalAmount} VND`);
+      }
 
       // Bước 5: Tạo đơn đặt vé mới
       // Tính điểm tích lũy (10% tổng tiền) ngay khi tạo booking
@@ -462,16 +579,27 @@ class BookingService {
         // Tiếp tục với userId ban đầu nếu có lỗi
       }
 
-      // Sử dụng DATEADD từ SQL Server để đảm bảo múi giờ nhất quán với booking
+      // Sử dụng SQL Server để đảm bảo múi giờ nhất quán
+      // Thực hiện truy vấn raw SQL để lấy thời gian hiện tại và deadline từ SQL Server
+      const [serverTimeResult] = await sequelize.query(`
+        SELECT 
+          GETDATE() as CurrentTime, 
+          DATEADD(minute, 5, GETDATE()) as PaymentDeadline
+      `, { type: sequelize.QueryTypes.SELECT, transaction });
+      
+      logger.info(`Thời gian server SQL: ${serverTimeResult.CurrentTime}, Deadline: ${serverTimeResult.PaymentDeadline}`);
+      
+      // Tạo booking với thời gian từ SQL Server
       const booking = await TicketBooking.create({
         User_ID: bookingUserId, // Sử dụng bookingUserId thay vì userId
         Showtime_ID: normalizedBookingData.showtimeId,
         Promotion_ID: normalizedBookingData.promotionId || null,
-        Booking_Date: sequelize.literal('GETDATE()'),
-        Payment_Deadline: sequelize.literal('DATEADD(minute, 5, GETDATE())'), // Thêm 5 phút vào thời điểm hiện tại của server
+        Booking_Date: serverTimeResult.CurrentTime,
+        Payment_Deadline: serverTimeResult.PaymentDeadline, // Sử dụng thời gian từ SQL Server
         Total_Amount: totalAmount,
         Points_Earned: pointsToEarn, // Đặt điểm tích lũy ngay khi tạo booking
-        Points_Used: 0, // Sẽ cập nhật nếu người dùng sử dụng điểm
+        Points_Used: pointsToUse, // Lưu số điểm đã sử dụng
+        Discount_Amount: discountAmount, // Lưu số tiền giảm giá
         Status: 'Pending',
         Created_By: userId
       }, { transaction });
@@ -490,9 +618,24 @@ class BookingService {
         Booking_ID: booking.Booking_ID,
         Date: sequelize.literal('GETDATE()'),
         Status: 'Pending',
-        Notes: 'Đơn đặt vé đã được tạo, đang chờ thanh toán.',
+        Notes: pointsToUse > 0 
+          ? `Đơn đặt vé đã được tạo, đã sử dụng ${pointsToUse} điểm để giảm giá ${discountAmount} VND, đang chờ thanh toán.`
+          : 'Đơn đặt vé đã được tạo, đang chờ thanh toán.',
         IsRead: false
       }, { transaction });
+
+      // Nếu có sử dụng điểm, tạo bản ghi đổi điểm
+      if (pointsToUse > 0) {
+        await PointsRedemption.create({
+          User_ID: userId,
+          Points_Redeemed: pointsToUse,
+          Date: sequelize.literal('GETDATE()'),
+          Status: 'Completed',
+          Note: `Áp dụng điểm giảm giá cho booking ${booking.Booking_ID}`
+        }, { transaction });
+
+        logger.info(`Đã tạo bản ghi đổi điểm cho booking ${booking.Booking_ID}`);
+      }
 
       // Bước 8: Commit transaction nếu tất cả thành công
       await transaction.commit();
@@ -509,6 +652,9 @@ class BookingService {
         }
         return a.Column - b.Column;
       });
+      
+      // Format thời gian để tránh vấn đề UTC - sử dụng cách xử lý giống database.js (raw SQL)
+      const formattedStartTime = this.formatTimeFromShowtime(showtime.Start_Time);
 
       // Trả về thông tin đặt vé đã tạo
       return {
@@ -519,10 +665,14 @@ class BookingService {
           Showtime_ID: normalizedBookingData.showtimeId,
           Movie_Name: showtime.Movie.Movie_Name,
           Show_Date: showtime.Show_Date,
-          Start_Time: showtime.Start_Time,
+          Start_Time: formattedStartTime,
           Room_Name: showtime.CinemaRoom.Room_Name,
           Seats: formattedSeats,
+          Original_Amount: priceCalculation.totalAmount,
+          Discount_Amount: discountAmount,
           Total_Amount: totalAmount,
+          Points_Used: pointsToUse,
+          Points_Earned: pointsToEarn,
           Payment_Deadline: booking.Payment_Deadline,
           Status: 'Pending',
           Payment_Method: normalizedBookingData.paymentMethod || null
@@ -570,13 +720,39 @@ class BookingService {
       };
     }
 
-    // Bước 2: Lấy ra danh sách seat_id từ layout_id
-    const seats = await Seat.findAll({
-      where: {
-        layout_id: { [Op.in]: layoutIds }
-      },
-      transaction
-    });
+    // Bước 2: Lấy ra danh sách seat_id từ layout_id với error handling
+    let seats;
+    try {
+      seats = await Seat.findAll({
+        where: {
+          Layout_ID: { [Op.in]: layoutIds } // Sửa từ layout_id thành Layout_ID
+        },
+        transaction,
+        logging: (sql) => logger.info(`SQL Query for Seats availability check: ${sql}`)
+      });
+    } catch (seatQueryError) {
+      logger.error(`Lỗi khi query Seat table trong availability check: ${seatQueryError.message}`);
+      logger.error(`SQL Error Stack: ${seatQueryError.stack}`);
+
+      // Thử query trực tiếp để debug
+      try {
+        const rawSeats = await sequelize.query(`
+          SELECT * FROM [ksf00691_team03].[Seats]
+          WHERE Layout_ID IN (${layoutIds.join(',')})
+        `, {
+          type: sequelize.QueryTypes.SELECT,
+          transaction
+        });
+        logger.info(`Raw query thành công trong availability check, tìm thấy ${rawSeats.length} ghế`);
+        seats = rawSeats;
+      } catch (rawQueryError) {
+        logger.error(`Raw query cũng thất bại trong availability check: ${rawQueryError.message}`);
+        return {
+          available: false,
+          reason: 'Không thể kiểm tra tình trạng ghế do lỗi hệ thống'
+        };
+      }
+    }
 
     // Nếu không tìm thấy đủ ghế
     if (seats.length !== layoutIds.length) {
@@ -586,7 +762,7 @@ class BookingService {
       };
     }
 
-    const seatIds = seats.map(seat => seat.seat_id);
+    const seatIds = seats.map(seat => seat.Seat_ID); // Sửa từ seat_id thành Seat_ID
 
     // Bước 3: Kiểm tra xem các ghế này đã được đặt trong suất chiếu này chưa
     const existingTickets = await Ticket.findAll({
@@ -619,8 +795,12 @@ class BookingService {
 
   /**
    * Phương thức calculateTotalAmount - Tính tổng tiền cho các ghế đã chọn
+   * @param {Array} layouts - Danh sách layout ghế
+   * @param {string} roomType - Loại phòng
+   * @param {Transaction} transaction - Transaction Sequelize
+   * @param {Object} showtimeInfo - Thông tin suất chiếu (từ createBooking)
    */
-  async calculateTotalAmount(layouts, roomType, transaction) {
+  async calculateTotalAmount(layouts, roomType, transaction, showtimeInfo = null) {
     let totalAmount = 0;
     const ticketPricings = {}; // Object lưu trữ giá vé theo loại ghế
 
@@ -628,79 +808,128 @@ class BookingService {
     const pricingService = require('./pricingService');
     const { Showtime } = require('../models');
 
-    // Bước 1: Tạo giả lập một showtime để tính giá (vào ngày hiện tại, sử dụng local timezone)
-    // Sử dụng timezone local thay vì UTC để tránh lỗi ngày
-    const now = new Date();
-    const currentDate = now.getFullYear() + '-' + 
+    // Bước 1: Tìm thông tin suất chiếu từ tham số hoặc từ layout
+    let showDate = null;
+    let startTime = null;
+    let showtimeId = null;
+    
+    // Sử dụng thông tin từ tham số nếu có
+    if (showtimeInfo && showtimeInfo.showDate && showtimeInfo.startTime) {
+      showDate = showtimeInfo.showDate;
+      startTime = showtimeInfo.startTime;
+      showtimeId = showtimeInfo.showtimeId;
+    } else {
+      // Lấy showtime_id từ layouts nếu không có từ tham số
+      showtimeId = layouts.length > 0 && layouts[0].Showtime_ID ? layouts[0].Showtime_ID : 
+                        (layouts.length > 0 && layouts[0].showtime_id ? layouts[0].showtime_id : null);
+      
+      if (showtimeId) {
+        try {
+          const showtime = await Showtime.findByPk(showtimeId, { transaction });
+          if (showtime) {
+            showDate = showtime.Show_Date;
+            startTime = showtime.Start_Time;
+            
+            // Sử dụng phương thức formatTimeFromShowtime để đảm bảo định dạng nhất quán
+            startTime = this.formatTimeFromShowtime(startTime);
+          }
+        } catch (error) {
+          // Xử lý lỗi nếu không lấy được thông tin suất chiếu
+        }
+      }
+    }
+    
+    // Nếu không tìm thấy thông tin suất chiếu, sử dụng thời gian hiện tại
+    if (!showDate || !startTime) {
+      const now = new Date();
+      showDate = now.getFullYear() + '-' + 
                        String(now.getMonth() + 1).padStart(2, '0') + '-' + 
                        String(now.getDate()).padStart(2, '0');
-    const defaultTime = '12:00:00'; // Mặc định là buổi trưa để tránh hệ số tăng giá
+      startTime = '12:00:00'; // Mặc định là buổi trưa để tránh hệ số tăng giá
+    }
 
-    // Bước 2: Tính giá vé cho từng ghế dựa trên loại ghế
+    // Đảm bảo startTime là chuỗi định dạng đúng HH:MM:SS
+    startTime = this.formatTimeFromShowtime(startTime);
+    if (!startTime || (typeof startTime === 'string' && !startTime.includes(':'))) {
+      // Nếu không đúng định dạng, chuyển về 12:00:00
+      startTime = '12:00:00';
+    }
+
+    // Bước 3: Tính giá vé cho từng ghế dựa trên loại ghế
     for (const layout of layouts) {
       // Lấy loại ghế và chuẩn hóa để khớp với cấu hình trong ticketPricing.json
-      // Cấu hình định nghĩa "Regular" và "VIP" (với chữ cái đầu viết hoa)
-      let seatType = layout.seat_type || layout.Seat_Type;
+      let seatType = layout.seat_type || layout.Seat_Type || 'Regular';
 
       // Chuẩn hóa loại ghế - đảm bảo chữ cái đầu viết hoa, các chữ còn lại viết thường
       seatType = seatType.charAt(0).toUpperCase() + seatType.slice(1).toLowerCase();
 
-      // Bước 3: Nếu chưa có thông tin giá của loại ghế này, tính toán từ pricingService
+      // Bước 4: Nếu chưa có thông tin giá của loại ghế này, tính toán từ pricingService
       if (!ticketPricings[seatType]) {
         try {
-          // Sử dụng pricingService thay vì truy vấn DB
+          // Sử dụng pricingService với thời gian thực của suất chiếu
           const priceInfo = pricingService.calculateTicketPrice({
             roomType,
             seatType,
-            showDate: currentDate,
-            startTime: defaultTime
+            showDate: showDate,
+            startTime: startTime
           });
 
           // Lưu giá vé vào cache để dùng lại
           ticketPricings[seatType] = priceInfo.finalPrice;
-          logger.info(`Tính giá vé thành công cho loại ghế ${seatType}, phòng ${roomType}: ${priceInfo.finalPrice} VND`);
-          logger.info(`Chi tiết tính giá: ngày=${currentDate}, giờ=${defaultTime}, loại ngày=${priceInfo.details.dayType}, hệ số ngày=${priceInfo.multipliers.day}, hệ số giờ=${priceInfo.multipliers.time}`);
         } catch (error) {
-          logger.error(`Lỗi khi tính giá vé: ${error.message}`, error);
-
           // Thử với cách khác nếu thất bại (để tương thích với dữ liệu cũ)
           try {
             // Kiểm tra danh sách các loại ghế có sẵn trong cấu hình
             const availableSeatTypes = pricingService.getAllSeatTypes();
-            logger.info(`Các loại ghế có sẵn trong cấu hình: ${availableSeatTypes.join(', ')}`);
 
-            // Thử lại với loại ghế đầu tiên trong cấu hình nếu không khớp
-            if (availableSeatTypes.length > 0) {
+            // Thử lại với loại ghế Thường trong cấu hình nếu không khớp
+            if (availableSeatTypes.includes('Thường')) {
+              const priceInfo = pricingService.calculateTicketPrice({
+                roomType,
+                seatType: 'Thường',
+                showDate: showDate,
+                startTime: startTime
+              });
+
+              ticketPricings[seatType] = priceInfo.finalPrice;
+            } else if (availableSeatTypes.length > 0) {
+              // Nếu không có Thường, dùng loại ghế đầu tiên
               const firstAvailable = availableSeatTypes[0];
-              logger.info(`Thử lại với loại ghế mặc định: ${firstAvailable}`);
 
               const priceInfo = pricingService.calculateTicketPrice({
                 roomType,
                 seatType: firstAvailable,
-                showDate: currentDate,
-                startTime: defaultTime
+                showDate: showDate,
+                startTime: startTime
               });
 
               ticketPricings[seatType] = priceInfo.finalPrice;
-              logger.info(`Đã sử dụng giá ghế mặc định ${firstAvailable} cho loại ghế ${seatType}: ${priceInfo.finalPrice} VND`);
             } else {
               throw new Error(`Không thể tính giá vé cho loại phòng ${roomType} và loại ghế ${seatType}`);
             }
           } catch (fallbackError) {
-            logger.error(`Không thể xử lý giá vé sau khi thử tất cả các phương án: ${fallbackError.message}`);
             throw new Error(`Không thể tính giá vé cho loại phòng ${roomType} và loại ghế ${seatType}`);
           }
         }
       }
 
-      // Bước 4: Cộng dồn giá vé vào tổng
+      // Bước 5: Cộng dồn giá vé vào tổng
       totalAmount += ticketPricings[seatType];
     }
 
-    // Bước 5: Trả về kết quả tính toán
+    // Bước 6: Trả về kết quả tính toán
     return {
       totalAmount,  // Tổng tiền của tất cả ghế
-      ticketPricings // Object chứa giá vé theo loại ghế để sử dụng sau này
+      ticketPricings, // Object chứa giá vé theo loại ghế để sử dụng sau này
+      calculationDetails: {
+        roomType,
+        showDate,
+        startTime,
+        timeInfo: {
+          showDate: showDate,
+          startTime: startTime
+        }
+      }
     };
   }
 
@@ -710,107 +939,159 @@ class BookingService {
   async createOrUpdateSeats(layoutIds, showtimeId, bookingId, transaction) {
     logger.info(`Đang tạo/cập nhật ghế với layoutIds: ${JSON.stringify(layoutIds)}, showtimeId: ${showtimeId}, bookingId: ${bookingId}`);
 
-    // Bước 1: Lấy thông tin các ghế từ Layout ID
-    const seatLayouts = await SeatLayout.findAll({
-      where: {
-        Layout_ID: { [Op.in]: layoutIds },
-        Is_Active: true // Chỉ lấy những ghế còn hoạt động
-      },
-      transaction
-    });
+    try {
+      // Xử lý trường hợp layoutIds là mảng các đối tượng có chứa layout_id và showtime_id
+      const actualLayoutIds = layoutIds.map(item => {
+        if (typeof item === 'object' && item !== null) {
+          if (item.layout_id) {
+            return item.layout_id;
+          } else if (item.Layout_ID) {
+            return item.Layout_ID;
+          }
+        }
+        return item;
+      });
 
-    logger.info(`Tìm thấy ${seatLayouts.length} layout ghế cho các layout ID đã chọn`);
+      logger.info(`Actual Layout IDs sau khi xử lý: ${JSON.stringify(actualLayoutIds)}`);
 
-    if (seatLayouts.length !== layoutIds.length) {
-      logger.error(`Không tìm thấy đủ layout. Yêu cầu: ${layoutIds.length}, Tìm thấy: ${seatLayouts.length}`);
-      throw new Error('Một số ghế được chọn không hợp lệ hoặc không còn hoạt động');
-    }
-
-    // Bước 2: Lấy thông tin các ghế
-    let seats = await Seat.findAll({
-      where: {
-        Layout_ID: { [Op.in]: layoutIds }
-      },
-      transaction
-    });
-
-    logger.info(`Tìm thấy ${seats.length} ghế cho các layout ID đã chọn`);
-
-    // Bước 3: Tạo ghế mới nếu chưa tồn tại
-    const seatsToCreate = [];
-    for (const layout of seatLayouts) {
-      const existingSeat = seats.find(seat => seat.Layout_ID === layout.Layout_ID);
-      if (!existingSeat) {
-        // Tạo một ghế mới nếu chưa tồn tại
-        seatsToCreate.push({
-          Layout_ID: layout.Layout_ID,
-          Seat_Number: `${layout.Row_Label}${layout.Column_Number}`,
-          Is_Active: true
-        });
-      }
-    }
-
-    if (seatsToCreate.length > 0) {
-      logger.info(`Đang tạo ${seatsToCreate.length} ghế mới cho các layout chưa có ghế`);
-      const newSeats = await Seat.bulkCreate(seatsToCreate, { transaction });
-      seats = [...seats, ...newSeats];
-      logger.info(`Đã tạo thành công ${newSeats.length} ghế mới`);
-    }
-
-    if (seats.length === 0) {
-      logger.error(`Không tìm thấy hoặc không thể tạo ghế cho layout IDs: ${JSON.stringify(layoutIds)}`);
-      throw new Error('Không tìm thấy thông tin ghế từ layout IDs');
-    }
-
-    // Bước 4: Kiểm tra xem ghế đã được đặt cho xuất chiếu này chưa
-    const existingTickets = await Ticket.findAll({
-      where: {
-        Seat_ID: { [Op.in]: seats.map(seat => seat.Seat_ID) },
-        Showtime_ID: showtimeId,
-        Status: { [Op.notIn]: ['Cancelled', 'Expired'] }
-      },
-      transaction
-    });
-
-    logger.info(`Tìm thấy ${existingTickets.length} vé đã tồn tại cho các ghế này trong suất chiếu`);
-
-    // Nếu có vé tồn tại cho ghế và xuất chiếu này, nghĩa là ghế đã được đặt
-    if (existingTickets.length > 0) {
-      const seatIds = existingTickets.map(ticket => ticket.Seat_ID);
-      const takenSeats = seats
-        .filter(seat => seatIds.includes(seat.Seat_ID));
-
-      const takenLayouts = takenSeats.map(seat => seat.Layout_ID);
-
-      const seatPositions = await SeatLayout.findAll({
-        where: { Layout_ID: { [Op.in]: takenLayouts } },
-        attributes: ['Row_Label', 'Column_Number'],
+      // Bước 1: Lấy thông tin các ghế từ Layout ID
+      const seatLayouts = await SeatLayout.findAll({
+        where: {
+          Layout_ID: { [Op.in]: actualLayoutIds },
+          Is_Active: true // Chỉ lấy những ghế còn hoạt động
+        },
         transaction
       });
 
-      const takenSeatsInfo = seatPositions.map(s => `${s.Row_Label}${s.Column_Number}`).join(', ');
+      logger.info(`Tìm thấy ${seatLayouts.length} layout ghế cho các layout ID đã chọn`);
 
-      const seatTakenError = new Error(`Ghế sau đã được đặt: ${takenSeatsInfo}. Vui lòng chọn ghế khác.`);
-      seatTakenError.name = 'SeatUnavailableError';
-      seatTakenError.code = 'SEAT_TAKEN';
-      seatTakenError.statusCode = 409; // Conflict
-      seatTakenError.takenSeats = takenLayouts;
-      throw seatTakenError;
+      if (seatLayouts.length !== actualLayoutIds.length) {
+        logger.error(`Không tìm thấy đủ layout. Yêu cầu: ${actualLayoutIds.length}, Tìm thấy: ${seatLayouts.length}`);
+        logger.error(`Layout IDs yêu cầu: ${JSON.stringify(actualLayoutIds)}`);
+        logger.error(`Layout IDs tìm thấy: ${JSON.stringify(seatLayouts.map(l => l.Layout_ID))}`);
+        throw new Error('Một số ghế được chọn không hợp lệ hoặc không còn hoạt động');
+      }
+
+      // Bước 2: Lấy thông tin các ghế với error handling tốt hơn
+      let seats;
+      try {
+        seats = await Seat.findAll({
+          where: {
+            Layout_ID: { [Op.in]: actualLayoutIds }
+          },
+          transaction,
+          logging: (sql) => logger.info(`SQL Query for Seats: ${sql}`)
+        });
+      } catch (seatQueryError) {
+        logger.error(`Lỗi khi query Seat table: ${seatQueryError.message}`);
+        logger.error(`SQL Error Stack: ${seatQueryError.stack}`);
+
+        // Thử query trực tiếp để debug
+        try {
+          const rawSeats = await sequelize.query(`
+            SELECT * FROM [ksf00691_team03].[Seats]
+            WHERE Layout_ID IN (${actualLayoutIds.join(',')})
+          `, {
+            type: sequelize.QueryTypes.SELECT,
+            transaction
+          });
+          logger.info(`Raw query thành công, tìm thấy ${rawSeats.length} ghế`);
+          seats = rawSeats;
+        } catch (rawQueryError) {
+          logger.error(`Raw query cũng thất bại: ${rawQueryError.message}`);
+          throw new Error(`Không thể truy vấn bảng Seats: ${seatQueryError.message}`);
+        }
+      }
+
+      logger.info(`Tìm thấy ${seats.length} ghế cho các layout ID đã chọn`);
+
+      // Bước 3: Tạo ghế mới nếu chưa tồn tại
+      const seatsToCreate = [];
+      for (const layout of seatLayouts) {
+        const existingSeat = seats.find(seat => seat.Layout_ID === layout.Layout_ID);
+        if (!existingSeat) {
+          // Tạo một ghế mới nếu chưa tồn tại
+          seatsToCreate.push({
+            Layout_ID: layout.Layout_ID,
+            Seat_Number: `${layout.Row_Label}${layout.Column_Number}`,
+            Is_Active: true
+          });
+        }
+      }
+
+      if (seatsToCreate.length > 0) {
+        logger.info(`Đang tạo ${seatsToCreate.length} ghế mới cho các layout chưa có ghế`);
+        const newSeats = await Seat.bulkCreate(seatsToCreate, { transaction });
+        seats = [...seats, ...newSeats];
+        logger.info(`Đã tạo thành công ${newSeats.length} ghế mới`);
+      }
+
+      if (seats.length === 0) {
+        logger.error(`Không tìm thấy hoặc không thể tạo ghế cho layout IDs: ${JSON.stringify(actualLayoutIds)}`);
+        throw new Error('Không tìm thấy thông tin ghế từ layout IDs');
+      }
+
+      // Bước 4: Kiểm tra xem ghế đã được đặt cho xuất chiếu này chưa
+      const existingTickets = await Ticket.findAll({
+        where: {
+          Seat_ID: { [Op.in]: seats.map(seat => seat.Seat_ID) },
+          Showtime_ID: showtimeId,
+          Status: { [Op.notIn]: ['Cancelled', 'Expired'] }
+        },
+        transaction
+      });
+
+      logger.info(`Tìm thấy ${existingTickets.length} vé đã tồn tại cho các ghế này trong suất chiếu`);
+
+      // Nếu có vé tồn tại cho ghế và xuất chiếu này, nghĩa là ghế đã được đặt
+      if (existingTickets.length > 0) {
+        const seatIds = existingTickets.map(ticket => ticket.Seat_ID);
+        const takenSeats = seats
+          .filter(seat => seatIds.includes(seat.Seat_ID));
+
+        const takenLayouts = takenSeats.map(seat => seat.Layout_ID);
+
+        const seatPositions = await SeatLayout.findAll({
+          where: { Layout_ID: { [Op.in]: takenLayouts } },
+          attributes: ['Row_Label', 'Column_Number'],
+          transaction
+        });
+
+        const takenSeatsInfo = seatPositions.map(s => `${s.Row_Label}${s.Column_Number}`).join(', ');
+
+        const seatTakenError = new Error(`Ghế sau đã được đặt: ${takenSeatsInfo}. Vui lòng chọn ghế khác.`);
+        seatTakenError.name = 'SeatUnavailableError';
+        seatTakenError.code = 'SEAT_TAKEN';
+        seatTakenError.statusCode = 409; // Conflict
+        seatTakenError.takenSeats = takenLayouts;
+        throw seatTakenError;
+      }
+
+      // Kết hợp thông tin chi tiết seats và layouts để trả về
+      const seatsWithLayouts = seats.map(seat => {
+        const layout = seatLayouts.find(layout => layout.Layout_ID === seat.Layout_ID);
+
+        // Thêm showtime_id vào layout để sử dụng khi tính giá vé
+        if (layout) {
+          layout.showtime_id = showtimeId;
+        }
+
+        return {
+          seat,
+          layout
+        };
+      });
+
+      logger.info(`Trả về ${seatsWithLayouts.length} ghế kèm theo thông tin layout`);
+
+      // Trả về danh sách ghế để tạo vé
+      return seatsWithLayouts;
+
+    } catch (error) {
+      logger.error(`Lỗi trong createOrUpdateSeats: ${error.message}`);
+      logger.error(`Error stack: ${error.stack}`);
+      throw error;
     }
-
-    // Kết hợp thông tin chi tiết seats và layouts để trả về
-    const seatsWithLayouts = seats.map(seat => {
-      const layout = seatLayouts.find(layout => layout.Layout_ID === seat.Layout_ID);
-      return {
-        seat,
-        layout
-      };
-    });
-
-    logger.info(`Trả về ${seatsWithLayouts.length} ghế kèm theo thông tin layout`);
-
-    // Trả về danh sách ghế để tạo vé
-    return seatsWithLayouts;
   }
 
   /**
@@ -849,11 +1130,11 @@ class BookingService {
         if (normalizedSeatType !== seatType) {
           logger.info(`Tìm thấy giá cho "${normalizedSeatType}" thay vì "${seatType}"`);
         }
-      } else if (ticketPricings['Regular']) {
-        // Fallback: sử dụng giá ghế Regular nếu không tìm được loại ghế tương ứng
-        normalizedSeatType = 'Regular';
-        price = ticketPricings['Regular'];
-        logger.info(`Không tìm thấy loại ghế "${seatType}", sử dụng giá ghế Regular thay thế`);
+              } else if (ticketPricings['Thường']) {
+          // Fallback: sử dụng giá ghế Thường nếu không tìm được loại ghế tương ứng
+          normalizedSeatType = 'Thường';
+          price = ticketPricings['Thường'];
+          logger.info(`Không tìm thấy loại ghế "${seatType}", sử dụng giá ghế Thường thay thế`);
       } else {
         logger.error(`Không tìm thấy thông tin giá vé cho loại ghế: ${seatType}`);
         throw new Error(`Không tìm thấy thông tin giá vé cho loại ghế ${seatType}`);
@@ -936,17 +1217,42 @@ class BookingService {
 
       logger.info(`Tìm thấy ${tickets.length} vé cho đơn đặt ${bookingId}`);
 
-      // Bước 3: Lấy thông tin ghế thông qua vé
+      // Bước 3: Lấy thông tin ghế thông qua vé với error handling
       const seatIds = tickets.map(ticket => ticket.Seat_ID);
-      const seats = await Seat.findAll({
-        where: { Seat_ID: { [Op.in]: seatIds } },
-        include: [{
-          model: SeatLayout,
-          as: 'SeatLayout',
-          attributes: ['Row_Label', 'Column_Number', 'Seat_Type']
-        }],
-        transaction
-      });
+      let seats;
+      try {
+        seats = await Seat.findAll({
+          where: { Seat_ID: { [Op.in]: seatIds } },
+          include: [{
+            model: SeatLayout,
+            as: 'SeatLayout',
+            attributes: ['Row_Label', 'Column_Number', 'Seat_Type']
+          }],
+          transaction,
+          logging: (sql) => logger.info(`SQL Query for Seats in payment update: ${sql}`)
+        });
+      } catch (seatQueryError) {
+        logger.error(`Lỗi khi query Seat table trong payment update: ${seatQueryError.message}`);
+        logger.error(`SQL Error Stack: ${seatQueryError.stack}`);
+
+        // Thử query trực tiếp để debug
+        try {
+          const rawSeats = await sequelize.query(`
+            SELECT s.*, sl.Row_Label, sl.Column_Number, sl.Seat_Type
+            FROM [ksf00691_team03].[Seats] s
+            LEFT JOIN [ksf00691_team03].[Seat_Layout] sl ON s.Layout_ID = sl.Layout_ID
+            WHERE s.Seat_ID IN (${seatIds.join(',')})
+          `, {
+            type: sequelize.QueryTypes.SELECT,
+            transaction
+          });
+          logger.info(`Raw query thành công trong payment update, tìm thấy ${rawSeats.length} ghế`);
+          seats = rawSeats;
+        } catch (rawQueryError) {
+          logger.error(`Raw query cũng thất bại trong payment update: ${rawQueryError.message}`);
+          throw new Error(`Không thể lấy thông tin ghế cho đơn đặt ${bookingId}: ${seatQueryError.message}`);
+        }
+      }
 
       if (seats.length === 0) {
         throw new Error(`Không tìm thấy ghế cho vé của đơn đặt ${bookingId}`);
@@ -973,11 +1279,15 @@ class BookingService {
       logger.info(`Đã cập nhật ${updatedTicketsCount[0]} vé sang trạng thái Đang hoạt động cho đơn đặt vé ${bookingId}`);
 
       // Bước 6: Tạo bản ghi lịch sử đặt vé
+      const historyNotes = booking.Points_Used > 0
+        ? `Thanh toán thành công, đơn đặt vé đã được xác nhận. Đã sử dụng ${booking.Points_Used} điểm để giảm giá ${booking.Discount_Amount || booking.Points_Used} VND. Tích lũy ${booking.Points_Earned} điểm.`
+        : `Thanh toán thành công, đơn đặt vé đã được xác nhận. Tích lũy ${booking.Points_Earned} điểm.`;
+
       await BookingHistory.create({
-        Booking_ID: bookingId,
+        Booking_ID: booking.Booking_ID,
         Date: sequelize.literal('GETDATE()'),
         Status: 'Confirmed',
-        Notes: `Thanh toán thành công, đơn đặt vé đã được xác nhận. Tích lũy ${booking.Points_Earned} điểm.`,
+        Notes: historyNotes,
         IsRead: false
       }, { transaction });
 
@@ -991,18 +1301,21 @@ class BookingService {
 
         // Đảm bảo các giá trị hợp lệ
         const paymentData = {
-          Booking_ID: bookingId,
-          Amount: booking.Total_Amount || 0,
-          Payment_Method: paymentMethod,
-          Payment_Reference: this.generatePaymentReference(),
-          Transaction_Date: sequelize.literal('GETDATE()'),
+          Booking_ID: parseInt(bookingId),
+          Amount: parseFloat(booking.Total_Amount || 0),
+          Payment_Method: String(paymentMethod || 'Cash').substring(0, 50), // Giới hạn độ dài
+          Payment_Reference: String(this.generatePaymentReference()).substring(0, 100),
+          Transaction_Date: new Date(),
           Payment_Status: 'PAID',
           Processor_Response: JSON.stringify({
             status: 'paid',
             message: 'Payment processed successfully',
-            timestamp: new Date().toISOString()
-          }).substring(0, 255), // Giới hạn độ dài để tránh lỗi
-          Processed_By: userId
+            timestamp: new Date().toISOString(),
+            method: paymentMethod || 'Cash',
+            points_used: booking.Points_Used || 0,
+            discount_amount: booking.Discount_Amount || 0
+          }).substring(0, 250), // Giới hạn độ dài an toàn
+          Processed_By: parseInt(userId) || null
         };
 
         // Tạo bản ghi payment
@@ -1010,7 +1323,11 @@ class BookingService {
           await Payment.create(paymentData, { transaction });
           logger.info(`Đã tạo bản ghi thanh toán thành công cho đơn đặt vé ${bookingId}`);
         } catch (innerPaymentError) {
-          logger.error(`Chi tiết lỗi khi tạo payment: ${innerPaymentError.message}`);
+          logger.error(`Chi tiết lỗi khi tạo payment:`, {
+            message: innerPaymentError.message || 'Unknown error',
+            name: innerPaymentError.name || 'Unknown error type',
+            stack: innerPaymentError.stack
+          });
           // Tiếp tục thực hiện, ngay cả khi không thể tạo payment
           // Sẽ tạo payment dự phòng sau commit
         }
@@ -1039,44 +1356,48 @@ class BookingService {
           await this.createBackupPaymentRecord(bookingId, paymentMethod, userId);
         }
       } catch (error) {
-        logger.error(`Lỗi khi kiểm tra hoặc tạo payment dự phòng: ${error.message}`);
+        logger.error(`Lỗi khi kiểm tra hoặc tạo payment dự phòng:`, {
+          message: error.message || 'Unknown error',
+          name: error.name || 'Unknown error type',
+          code: error.code,
+          sql: error.sql // Để debug SQL error
+        });
         // Thử một lần nữa với phương pháp trực tiếp
         await this.createBackupPaymentRecord(bookingId, paymentMethod, userId);
       }
 
       // Bước 10: Tích điểm cho người dùng
       try {
-        logger.info(`Bắt đầu tính điểm tích lũy cho đơn đặt vé ${bookingId}, người dùng ${userId}`);
+        // Chỉ tích điểm cho khách hàng, không tích điểm cho staff
+        const customerId = booking.User_ID; // ID khách hàng
+        const staffId = userId; // ID staff thực hiện thanh toán
+        
+        if (customerId) {
+          logger.info(`Bắt đầu tích điểm tự động cho khách hàng ${customerId} từ đơn đặt vé ${bookingId} (thanh toán bởi staff ${staffId})`);
 
-        // Kiểm tra xem user có tồn tại không
-        const userExists = await User.findByPk(userId);
-        if (!userExists) {
-          logger.error(`Không thể tích điểm: User ${userId} không tồn tại`);
-          return {
-            success: true,
-            message: 'Thanh toán đã cập nhật thành công nhưng không thể tích điểm (không tìm thấy người dùng)',
-            booking: {
-              ...booking.toJSON(),
-              Payment_Method: paymentMethod,
-              Seats: await this.getFormattedSeatPositions(bookingId)
-            }
-          };
-        }
-
-        logger.info(`Gọi pointsService.addPointsFromBookingAsync với: userId=${userId}, bookingId=${bookingId}, totalAmount=${booking.Total_Amount}, pointsUsed=${booking.Points_Used || 0}`);
+          // Kiểm tra xem khách hàng có tồn tại không
+          const customer = await User.findByPk(customerId);
+          if (!customer) {
+            logger.error(`Không thể tích điểm: Khách hàng ${customerId} không tồn tại`);
+          } else {
+            logger.info(`Gọi pointsService.addPointsFromBookingAsync với: customerId=${customerId}, bookingId=${bookingId}, totalAmount=${booking.Total_Amount}, pointsUsed=${booking.Points_Used || 0}`);
 
         // Tạo instance mới của pointsService
         const pointsService = require('./pointsService');
 
-        // Gọi hàm thêm điểm
+            // Gọi hàm thêm điểm cho khách hàng
         const pointsResult = await pointsService.addPointsFromBookingAsync(
-          userId,
+              customerId, // Tích điểm cho khách hàng
           bookingId,
           booking.Total_Amount,
           booking.Points_Used || 0
         );
 
-        logger.info(`✅ Kết quả tích điểm: Đã cộng ${pointsResult} điểm cho người dùng ${userId} từ đơn đặt vé ${bookingId}`);
+            logger.info(`✅ Kết quả tích điểm: Đã cộng ${pointsResult} điểm cho khách hàng ${customerId} từ đơn đặt vé ${bookingId}`);
+          }
+        } else {
+          logger.warn(`Không thể tích điểm: Đơn đặt vé ${bookingId} chưa được liên kết với khách hàng (User_ID = null). Staff ${staffId} cần liên kết booking với khách hàng để tích điểm.`);
+        }
       } catch (pointsError) {
         logger.error(`❌ Lỗi khi tích điểm: ${pointsError.message}`);
         // Không throw lỗi ở đây để không ảnh hưởng đến flow chính
@@ -1084,8 +1405,45 @@ class BookingService {
 
       // Bước 11: Gửi thông báo xác nhận thanh toán
       try {
-        const user = await User.findByPk(userId);
-        await this.sendPaymentConfirmationNotifications(booking, user, tickets, seats);
+        // Gửi email đến khách hàng (User_ID) thay vì staff (Created_By)
+        const customerId = booking.User_ID;
+        const staffId = userId;
+        
+        if (customerId) {
+          // Lấy thông tin khách hàng để gửi email
+          const customer = await User.findByPk(customerId);
+          if (customer && customer.Email) {
+            logger.info(`Gửi email xác nhận thanh toán đến khách hàng: ${customer.Email} (ID: ${customerId}) cho booking ${bookingId} - Thanh toán bởi staff ${staffId}`);
+            
+            // Xử lý email trong background để không làm chậm quá trình thanh toán
+            // Tạo booking history cho việc đưa email vào hàng đợi
+            try {
+              await BookingHistory.create({
+                Booking_ID: booking.Booking_ID,
+                Date: sequelize.literal('GETDATE()'),
+                Status: 'Email Scheduled',
+                Notes: `Đã lên lịch gửi email vé điện tử đến ${customer.Email}`,
+                IsRead: false
+              });
+              
+              // Đặt email để gửi trong background sau khi trả response cho client
+              process.nextTick(async () => {
+                try {
+                  // Gửi email xác nhận đặt vé
+                  await this.sendPaymentConfirmationNotifications(booking, customer, tickets, seats);
+                } catch (backgroundError) {
+                  logger.error(`Lỗi khi gửi email trong background: ${backgroundError.message}`);
+                }
+              });
+            } catch (historyError) {
+              logger.error(`Lỗi khi tạo booking history cho email: ${historyError.message}`);
+            }
+          } else {
+            logger.warn(`Không thể gửi email: Khách hàng ${customerId} không có email hợp lệ`);
+          }
+        } else {
+          logger.warn(`Không thể gửi email: Đơn đặt vé ${bookingId} chưa được liên kết với khách hàng (User_ID = null). Staff ${staffId} cần liên kết booking với khách hàng trước khi gửi email.`);
+        }
       } catch (notificationError) {
         logger.error(`Lỗi khi gửi thông báo xác nhận thanh toán: ${notificationError.message}`);
         // Không throw lỗi ở đây để không ảnh hưởng đến việc xác nhận payment đã thành công
@@ -1103,7 +1461,10 @@ class BookingService {
         booking: {
           ...bookingJSON,
           Seats: formattedSeats,
-          Payment_Method: paymentMethod // Thêm payment method vào response
+          Payment_Method: paymentMethod, // Thêm payment method vào response
+          Points_Used: booking.Points_Used || 0,
+          Discount_Amount: booking.Discount_Amount || 0,
+          Original_Amount: booking.Total_Amount + (booking.Discount_Amount || 0) // Tính lại tổng tiền gốc
         }
       };
 
@@ -1131,35 +1492,52 @@ class BookingService {
     try {
       logger.info(`Thử tạo payment record dự phòng`);
 
-      // Truy vấn booking để lấy Total_Amount
+      // Truy vấn booking để lấy Total_Amount và thông tin điểm
       const booking = await TicketBooking.findByPk(bookingId);
       const amount = booking ? booking.Total_Amount : 0;
-      logger.info(`Lấy được Total_Amount từ booking: ${amount}`);
+      const pointsUsed = booking ? booking.Points_Used || 0 : 0;
+      const discountAmount = booking ? booking.Discount_Amount || pointsUsed : 0;
+      const originalAmount = amount + discountAmount; // Tính tổng tiền gốc trước khi giảm giá
+      
+      logger.info(`Lấy được thông tin từ booking: Total_Amount=${amount}, Points_Used=${pointsUsed}, Discount_Amount=${discountAmount}, Original_Amount=${originalAmount}`);
 
       const paymentRef = `BACKUP-${Date.now()}`;
       const paymentData = {
-        Booking_ID: bookingId,
-        Amount: amount, // Sử dụng Total_Amount từ booking
-        Payment_Method: paymentMethod || 'Cash',
-        Payment_Reference: paymentRef,
+        Booking_ID: parseInt(bookingId),
+        Amount: parseFloat(amount || 0),
+        Payment_Method: String(paymentMethod || 'Cash').substring(0, 50),
+        Payment_Reference: String(paymentRef).substring(0, 100),
         Transaction_Date: new Date(),
         Payment_Status: 'PAID',
-        Processor_Response: JSON.stringify({ source: 'backup', status: 'paid' }),
-        Processed_By: userId
+        Processor_Response: JSON.stringify({ 
+          source: 'backup', 
+          status: 'paid',
+          timestamp: new Date().toISOString(),
+          points_used: pointsUsed,
+          discount_amount: discountAmount,
+          original_amount: originalAmount
+        }).substring(0, 250),
+        Processed_By: parseInt(userId) || null
       };
 
       const createdPayment = await Payment.create(paymentData);
 
-      logger.info(`Đã tạo payment record dự phòng thành công với Payment_Method: ${paymentMethod || 'Cash'} và Amount: ${amount}`);
+      logger.info(`Đã tạo payment record dự phòng thành công với Payment_Method: ${paymentMethod || 'Cash'}, Amount: ${amount}, Points_Used: ${pointsUsed}, Discount_Amount: ${discountAmount}`);
       return true;
     } catch (error) {
-      logger.error(`Không thể tạo payment record dự phòng: ${error.message}`);
+      logger.error(`Không thể tạo payment record dự phòng:`, {
+        message: error.message || 'Unknown error',
+        name: error.name || 'Unknown error type',
+        code: error.code,
+        sql: error.sql,
+        details: error.parent ? error.parent.message : null
+      });
 
       // Thử phương án cuối cùng với SQL trực tiếp
       try {
-        // Truy vấn booking để lấy Total_Amount
+        // Truy vấn booking để lấy thông tin
         const [bookingResult] = await sequelize.query(`
-          SELECT [Total_Amount] FROM [ksf00691_team03].[Ticket_Bookings]
+          SELECT [Total_Amount], [Points_Used], [Discount_Amount] FROM [ksf00691_team03].[Ticket_Bookings]
           WHERE [Booking_ID] = :bookingId
         `, {
           replacements: { bookingId: bookingId },
@@ -1167,7 +1545,11 @@ class BookingService {
         });
 
         const amount = bookingResult ? bookingResult.Total_Amount : 0;
-        logger.info(`Lấy được Total_Amount từ SQL trực tiếp: ${amount}`);
+        const pointsUsed = bookingResult ? bookingResult.Points_Used || 0 : 0;
+        const discountAmount = bookingResult ? bookingResult.Discount_Amount || pointsUsed : 0;
+        const originalAmount = amount + discountAmount; // Tính tổng tiền gốc trước khi giảm giá
+        
+        logger.info(`Lấy được thông tin từ SQL trực tiếp: Total_Amount=${amount}, Points_Used=${pointsUsed}, Discount_Amount=${discountAmount}, Original_Amount=${originalAmount}`);
 
         await sequelize.query(`
           INSERT INTO [ksf00691_team03].[Payments]
@@ -1176,20 +1558,32 @@ class BookingService {
           (:bookingId, :amount, :paymentMethod, :paymentRef, GETDATE(), 'PAID', :processorResponse, :userId)
         `, {
           replacements: {
-            bookingId: bookingId,
-            amount: amount, // Sử dụng Total_Amount từ booking
-            paymentMethod: paymentMethod || 'Cash',
+            bookingId: parseInt(bookingId),
+            amount: parseFloat(amount || 0),
+            paymentMethod: String(paymentMethod || 'Cash').substring(0, 50),
             paymentRef: `BACKUP-SQL-${Date.now()}`,
-            processorResponse: JSON.stringify({ source: 'backup-sql', status: 'paid' }),
-            userId: userId
+            processorResponse: JSON.stringify({ 
+              source: 'backup-sql', 
+              status: 'paid',
+              timestamp: new Date().toISOString(),
+              points_used: pointsUsed,
+              discount_amount: discountAmount,
+              original_amount: originalAmount
+            }).substring(0, 250),
+            userId: parseInt(userId) || null
           },
           type: sequelize.QueryTypes.INSERT
         });
 
-        logger.info(`Đã tạo payment record dự phòng thành công qua SQL trực tiếp với Amount: ${amount}`);
+        logger.info(`Đã tạo payment record dự phòng thành công qua SQL trực tiếp với Amount: ${amount}, Points_Used: ${pointsUsed}, Discount_Amount: ${discountAmount}`);
         return true;
       } catch (sqlError) {
-        logger.error(`Không thể tạo payment record qua SQL trực tiếp: ${sqlError.message}`);
+        logger.error(`Không thể tạo payment record qua SQL trực tiếp:`, {
+          message: sqlError.message || 'Unknown SQL error',
+          name: sqlError.name || 'Unknown error type',
+          code: sqlError.code,
+          details: sqlError.parent ? sqlError.parent.message : null
+        });
         return false;
       }
     }
@@ -1292,13 +1686,12 @@ class BookingService {
   // Hàm gửi thông báo xác nhận thanh toán
   async sendPaymentConfirmationNotifications(booking, user, tickets, seats) {
     try {
-      logger.info(`📧 Sending payment confirmation notification for booking ${booking.Booking_ID}:`, {
+      logger.info(`📧 Chuẩn bị gửi thông báo cho booking ${booking.Booking_ID}:`, {
         userId: booking.User_ID,
         userEmail: user?.Email,
         ticketsCount: tickets.length,
         seatsCount: seats.length,
-        totalAmount: booking.Total_Amount,
-        message: `Thanh toán đơn đặt vé #${booking.Booking_ID} đã được xác nhận thành công. ${tickets.length} vé đã được kích hoạt.`
+        totalAmount: booking.Total_Amount
       });
 
       // Kiểm tra có email người dùng không
@@ -1306,235 +1699,71 @@ class BookingService {
         logger.warn(`Không có email người dùng để gửi thông báo cho booking ${booking.Booking_ID}`);
         return;
       }
-
-      // Tạo emailService instance
-      const emailConfig = {
-        smtpServer: process.env.SMTP_SERVER || 'smtp.gmail.com',
-        smtpPort: process.env.SMTP_PORT || 587,
-        enableSsl: process.env.SMTP_SSL === 'true',
-        smtpUsername: process.env.SMTP_USERNAME || 'your-email@gmail.com',
-        smtpPassword: process.env.SMTP_PASSWORD || 'your-password',
-        senderEmail: process.env.SENDER_EMAIL || 'noreply@galaxycinema.com',
-        senderName: 'GALAXY Cinema',
-        apiBaseUrl: process.env.API_BASE_URL || 'http://localhost:3000',
-        supportPhone: process.env.SUPPORT_PHONE || '1900 xxxx'
-      };
-
-      const emailService = new (require('./emailService'))(logger, emailConfig);
-
-      // Lấy thông tin chi tiết cho email
-      const { Showtime } = require('../models');
-      const detailedBooking = await TicketBooking.findByPk(booking.Booking_ID, {
-        include: [
-          {
-            model: Showtime,
-            as: 'Showtime',
-            include: [
-              { model: Movie, as: 'Movie' },
-              { model: CinemaRoom, as: 'CinemaRoom' }
-            ]
-          }
-        ]
-      });
-
-      if (!detailedBooking || !detailedBooking.Showtime) {
-        logger.error(`Không tìm thấy thông tin chi tiết cho booking ${booking.Booking_ID}`);
-        return;
-      }
-
-      // Chuẩn bị thông tin booking cho email
-      const showDate = new Date(detailedBooking.Showtime.Show_Date);
-      const formattedShowDate = showDate.toLocaleDateString('vi-VN', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-
-      const formatTime = (time) => {
-        if (!time) return '';
-        if (typeof time === 'string') {
-          return time.slice(0, 5);
-        }
-        return new Date(time).toLocaleTimeString('vi-VN', { 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        });
-      };
-
-      // Tạo danh sách ghế
-      const seatLabels = seats.map(seat => {
-        const layout = seat.SeatLayout;
-        return layout ? `${layout.Row_Label}${layout.Column_Number}` : '';
-      }).filter(Boolean);
-
-      const bookingInfoForEmail = {
-        BookingId: booking.Booking_ID.toString(),
-        MovieName: detailedBooking.Showtime.Movie.Movie_Name,
-        CinemaRoom: detailedBooking.Showtime.CinemaRoom.Room_Name,
-        ShowDate: formattedShowDate,
-        ShowTime: formatTime(detailedBooking.Showtime.Start_Time),
-        Seats: seatLabels.join(', '),
-        TotalAmount: booking.Total_Amount.toLocaleString('vi-VN') + ' VND',
-        PaymentDate: new Date().toLocaleDateString('vi-VN', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-      };
-
-      // Tạo PDF vé cho từng ticket
-      const pdfTickets = [];
-      const ticketService = require('./ticketService');
-      const pdfGenerator = new (require('./pdfGeneratorService'))();
-      const qrCodeGenerator = new (require('./qrCodeGenerator'))();
-
-      logger.info(`Bắt đầu tạo ${tickets.length} vé PDF cho booking ${booking.Booking_ID}`);
-
-      for (const ticket of tickets) {
-        try {
-          // Tạo QR code cho vé
-          const qrCodeBuffer = await qrCodeGenerator.generateQRCode(ticket.Ticket_Code);
-          
-          // Tìm thông tin ghế cho vé này
-          const ticketSeat = seats.find(s => s.Seat_ID === ticket.Seat_ID);
-          const seatInfo = ticketSeat?.SeatLayout ? 
-            `${ticketSeat.SeatLayout.Row_Label}${ticketSeat.SeatLayout.Column_Number}` : 
-            'N/A';
-
-          // Chuẩn bị dữ liệu để tạo PDF
-          const ticketData = {
-            TicketCode: ticket.Ticket_Code,
-            MovieName: detailedBooking.Showtime.Movie.Movie_Name,
-            CinemaRoom: detailedBooking.Showtime.CinemaRoom.Room_Name,
-            ShowDate: formattedShowDate,
-            ShowTime: formatTime(detailedBooking.Showtime.Start_Time),
-            SeatInfo: seatInfo,
-            BookingCode: booking.Booking_ID.toString(),
-            Price: ticket.Final_Price
-          };
-
-          // Tạo PDF vé
-          const pdfContent = await pdfGenerator.generateTicketPdf(ticketData, qrCodeBuffer);
-          
-          if (pdfContent && pdfContent.length > 0) {
-            pdfTickets.push({
-              filename: `Ve_GALAXY_Cinema_${ticket.Ticket_Code}.pdf`,
-              content: pdfContent,
-              contentType: 'application/pdf'
-            });
-            logger.info(`✅ Tạo PDF thành công cho vé ${ticket.Ticket_Code}`);
-          }
-        } catch (pdfError) {
-          logger.error(`❌ Lỗi khi tạo PDF cho vé ${ticket.Ticket_Code}:`, pdfError.message);
-          // Tiếp tục với các vé khác
-        }
-      }
-
-      logger.info(`Đã tạo thành công ${pdfTickets.length}/${tickets.length} vé PDF`);
-
-      // Gửi email xác nhận thanh toán với vé đính kèm
-      let emailSent = false;
       
-      if (pdfTickets.length > 0) {
-        // Gửi email với vé PDF đính kèm
-        emailSent = await emailService.sendTicketsEmailAsync(
-          user.Email,
-          user.Full_Name || user.Email,
-          bookingInfoForEmail,
-          pdfTickets
-        );
+      // Kiểm tra queue có khả dụng không
+      let useQueue = false;
+      
+      try {
+        // Thử import queue system
+        const queues = require('../queues');
+        if (queues && queues.addEmailJob) {
+          useQueue = true;
+          
+          // Thêm vào queue nếu có
+          const jobAdded = await queues.addEmailJob(booking.Booking_ID, user.Email);
+          
+          if (jobAdded) {
+            logger.info(`Sử dụng hệ thống queue để gửi email cho booking ${booking.Booking_ID}`);
+            
+            // Tạo booking history cho việc thêm job vào queue
+            await this.createBookingHistory(booking.Booking_ID, 'Email Queued', `Email được đưa vào hàng đợi xử lý`);
+            return true;
+          } else {
+            logger.warn(`Không thể thêm job vào queue, sẽ thử phương thức thay thế`);
+            useQueue = false;
+          }
+        }
+      } catch (queueError) {
+        // Nếu queue không khả dụng, fallback sang gửi trực tiếp
+        logger.warn(`Không thể sử dụng hệ thống queue: ${queueError.message}. Sẽ gửi email trực tiếp.`);
+      }
+      
+      // Nếu queue không khả dụng, gửi email trực tiếp
+      if (!useQueue) {
+        logger.info(`Gửi email trực tiếp cho booking ${booking.Booking_ID} đến ${user.Email}`);
         
-        if (emailSent) {
-          logger.info(`✅ Đã gửi email vé thành công với ${pdfTickets.length} vé PDF đến ${user.Email}`);
-        }
-      }
-
-      // Nếu không tạo được PDF hoặc gửi email thất bại, gửi email thông báo đơn giản
-      if (!emailSent) {
-        const simpleEmailSubject = `Xác nhận thanh toán thành công - Mã đặt vé: ${booking.Booking_ID}`;
-        const simpleEmailBody = `
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
-              .header { background-color: #28a745; color: white; padding: 15px; text-align: center; border-radius: 5px 5px 0 0; }
-              .content { padding: 20px; }
-              .booking-info { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
-              .footer { background-color: #f8f9fa; padding: 10px; text-align: center; font-size: 12px; color: #6c757d; border-radius: 0 0 5px 5px; }
-            </style>
-          </head>
-          <body>
-            <div class='container'>
-              <div class='header'>
-                <h2>✅ Thanh toán thành công - GALAXY Cinema</h2>
-              </div>
-              <div class='content'>
-                <p>Xin chào <strong>${user.Full_Name || user.Email}</strong>,</p>
-                <p>Cảm ơn bạn đã thanh toán thành công! Đơn đặt vé của bạn đã được xác nhận.</p>
-                
-                <div class='booking-info'>
-                  <h3>Thông tin đặt vé:</h3>
-                  <p><strong>Mã đặt vé:</strong> ${bookingInfoForEmail.BookingId}</p>
-                  <p><strong>Phim:</strong> ${bookingInfoForEmail.MovieName}</p>
-                  <p><strong>Phòng chiếu:</strong> ${bookingInfoForEmail.CinemaRoom}</p>
-                  <p><strong>Ngày chiếu:</strong> ${bookingInfoForEmail.ShowDate}</p>
-                  <p><strong>Giờ chiếu:</strong> ${bookingInfoForEmail.ShowTime}</p>
-                  <p><strong>Ghế:</strong> ${bookingInfoForEmail.Seats}</p>
-                  <p><strong>Tổng tiền:</strong> ${bookingInfoForEmail.TotalAmount}</p>
-                  <p><strong>Thời gian thanh toán:</strong> ${bookingInfoForEmail.PaymentDate}</p>
-                </div>
-                
-                <p><strong>Lưu ý quan trọng:</strong></p>
-                <ul>
-                  <li>Vui lòng đến rạp trước giờ chiếu ít nhất 15 phút</li>
-                  <li>Mang theo mã đặt vé <strong>${bookingInfoForEmail.BookingId}</strong> để check-in</li>
-                  <li>Liên hệ hotline nếu cần hỗ trợ: ${emailConfig.supportPhone}</li>
-                </ul>
-                
-                <p>Chúc bạn có trải nghiệm xem phim tuyệt vời!</p>
-                <p>Trân trọng,<br>Đội ngũ GALAXY Cinema</p>
-              </div>
-              <div class='footer'>
-                <p>Đây là email tự động, vui lòng không trả lời email này.</p>
-                <p>Nếu bạn cần hỗ trợ, vui lòng liên hệ hotline: ${emailConfig.supportPhone}</p>
-              </div>
-            </div>
-          </body>
-          </html>
-        `;
-
-        emailSent = await emailService.sendEmailAsync(user.Email, simpleEmailSubject, simpleEmailBody);
+        // QUAN TRỌNG: Sử dụng process.nextTick để đảm bảo response được trả về cho người dùng trước
+        process.nextTick(async () => {
+          try {
+            const TicketService = require('./ticketService');
+            const ticketService = new TicketService();
+            
+            logger.info(`Đang gửi email vé trực tiếp cho booking ${booking.Booking_ID}...`);
+            const result = await ticketService.sendTicketByEmailAsync(booking.Booking_ID, user.Email);
+            
+            if (result) {
+              logger.info(`✅ Đã gửi email vé điện tử thành công cho booking ${booking.Booking_ID} đến ${user.Email}`);
+              
+              // Tạo booking history cho việc gửi email
+              try {
+                await this.createBookingHistory(booking.Booking_ID, 'Email Sent', `Email vé điện tử đã được gửi đến ${user.Email}`);
+              } catch (historyError) {
+                logger.error(`Lỗi khi tạo booking history cho email: ${historyError.message}`);
+              }
+            } else {
+              logger.error(`❌ Không thể gửi email vé điện tử cho booking ${booking.Booking_ID}`);
+            }
+          } catch (emailError) {
+            logger.error(`Lỗi khi gửi email vé điện tử: ${emailError.message}`, emailError);
+          }
+        });
         
-        if (emailSent) {
-          logger.info(`✅ Đã gửi email xác nhận thanh toán đơn giản đến ${user.Email}`);
-        } else {
-          logger.error(`❌ Không thể gửi email xác nhận thanh toán đến ${user.Email}`);
-        }
+        return true;
       }
-
-      // Tạo booking history cho việc gửi email
-      if (emailSent) {
-        try {
-          const { BookingHistory } = require('../models');
-          await BookingHistory.create({
-            Booking_ID: booking.Booking_ID,
-            Date: sequelize.literal('GETDATE()'),
-            Status: 'Email Sent',
-            Notes: `Đã gửi email xác nhận thanh toán và ${pdfTickets.length > 0 ? `${pdfTickets.length} vé PDF` : 'thông tin đặt vé'} đến ${user.Email}`,
-            IsRead: false
-          });
-        } catch (historyError) {
-          logger.error(`Lỗi khi tạo booking history cho email:`, historyError.message);
-        }
-      }
-
+      
     } catch (error) {
-      logger.error('Error sending payment confirmation notifications:', error);
-      // Don't throw error - notification failure shouldn't break payment confirmation
+      logger.error(`Lỗi khi gửi thông báo: ${error.message}`, error);
+      return false;
     }
   }
 
@@ -1678,6 +1907,8 @@ class BookingService {
    */
   async checkPendingBooking(userId, existingTransaction = null) {
     const runInTransaction = async (transaction) => {
+      console.log(`🎯 [checkPendingBooking] Searching for pending booking with Created_By = ${userId}`);
+
       // Bước 1: Tìm đơn đặt vé đang ở trạng thái Pending được tạo bởi người dùng
       const pendingBooking = await TicketBooking.findOne({
         where: { Created_By: userId, Status: 'Pending' }, // Chỉ lấy đơn hàng Pending mới nhất được tạo bởi user này
@@ -1701,10 +1932,20 @@ class BookingService {
         transaction
       });
 
+      console.log(`🎯 [checkPendingBooking] Query result:`, {
+        found: !!pendingBooking,
+        bookingId: pendingBooking?.Booking_ID,
+        createdBy: pendingBooking?.Created_By,
+        status: pendingBooking?.Status
+      });
+
       // Bước 2: Nếu không có đơn đặt vé đang chờ, trả về kết quả cho phép tạo đơn mới
       if (!pendingBooking) {
+        console.log(`🎯 [checkPendingBooking] No pending booking found for user ${userId}`);
         return { canCreateNewBooking: true };
       }
+
+      console.log(`🎯 [checkPendingBooking] Found pending booking ${pendingBooking.Booking_ID} for user ${userId}`);
 
       // Bước 3: Kiểm tra xem đơn đặt vé đã quá hạn thanh toán chưa - SỬA ĐỂ DÙNG SQL THAY VÌ JAVASCRIPT
       // Sử dụng SQL để so sánh thời gian thay vì JavaScript để tránh vấn đề múi giờ
@@ -1783,8 +2024,11 @@ class BookingService {
           IsExpired: isExpired, // Trạng thái hết hạn từ SQL
           Seats: formattedSeats, // Chuỗi mô tả ghế đã đặt
           Total_Amount: pendingBooking.Total_Amount,
-          MovieName: pendingBooking.Showtime?.Movie?.Movie_Name,
-          RoomName: pendingBooking.Showtime?.CinemaRoom?.Room_Name,
+          // 🔧 FIX: Thêm các field bị thiếu
+          Showtime_ID: pendingBooking.Showtime_ID, // ← Thêm field này
+          Movie_ID: pendingBooking.Showtime?.Movie?.Movie_ID, // ← Thêm field này
+          Movie_Name: pendingBooking.Showtime?.Movie?.Movie_Name, // ← Đổi tên từ MovieName
+          Room_Name: pendingBooking.Showtime?.CinemaRoom?.Room_Name, // ← Đổi tên từ RoomName
           Show_Date: pendingBooking.Showtime?.Show_Date,
           Start_Time: pendingBooking.Showtime?.Start_Time,
           RemainingMinutes: Math.max(0, remainingMinutes) // Sử dụng kết quả từ SQL thay vì tính toán JavaScript
@@ -1995,16 +2239,44 @@ class BookingService {
       // Lấy danh sách Seat_ID từ vé
       const seatIds = tickets.map(ticket => ticket.Seat_ID);
 
-      // Lấy thông tin ghế dựa trên Seat_ID
-      const seats = seatIds.length > 0 ? await Seat.findAll({
-        where: { Seat_ID: { [Op.in]: seatIds } },
-        include: [{
-          model: SeatLayout,
-          as: 'SeatLayout',
-          attributes: ['Row_Label', 'Column_Number', 'Seat_Type']
-        }],
-        transaction
-      }) : [];
+      // Lấy thông tin ghế dựa trên Seat_ID với error handling
+      let seats = [];
+      if (seatIds.length > 0) {
+        try {
+          seats = await Seat.findAll({
+            where: { Seat_ID: { [Op.in]: seatIds } },
+            include: [{
+              model: SeatLayout,
+              as: 'SeatLayout',
+              attributes: ['Row_Label', 'Column_Number', 'Seat_Type']
+            }],
+            transaction,
+            logging: (sql) => logger.info(`SQL Query for Seats in cancellation: ${sql}`)
+          });
+        } catch (seatQueryError) {
+          logger.error(`Lỗi khi query Seat table trong cancellation: ${seatQueryError.message}`);
+          logger.error(`SQL Error Stack: ${seatQueryError.stack}`);
+
+          // Thử query trực tiếp để debug
+          try {
+            const rawSeats = await sequelize.query(`
+              SELECT s.*, sl.Row_Label, sl.Column_Number, sl.Seat_Type
+              FROM [ksf00691_team03].[Seats] s
+              LEFT JOIN [ksf00691_team03].[Seat_Layout] sl ON s.Layout_ID = sl.Layout_ID
+              WHERE s.Seat_ID IN (${seatIds.join(',')})
+            `, {
+              type: sequelize.QueryTypes.SELECT,
+              transaction
+            });
+            logger.info(`Raw query thành công trong cancellation, tìm thấy ${rawSeats.length} ghế`);
+            seats = rawSeats;
+          } catch (rawQueryError) {
+            logger.error(`Raw query cũng thất bại trong cancellation: ${rawQueryError.message}`);
+            // Tiếp tục với seats = [] để không crash toàn bộ process
+            seats = [];
+          }
+        }
+      }
 
       logger.info(`Found ${seats.length} seats for the tickets of booking ${bookingId}`);
 
@@ -2022,7 +2294,7 @@ class BookingService {
         logger.info(`Refund amount calculated: ${refundAmount} for booking ${bookingId}`);
       }
 
-      // Bước 6: Xóa các vé
+      // Bước 6: Xóa các vé trước (để tránh foreign key constraint)
       let deletedTicketsCount = 0;
       if (tickets.length > 0) {
         deletedTicketsCount = await Ticket.destroy({
@@ -2032,26 +2304,16 @@ class BookingService {
         logger.info(`Deleted ${deletedTicketsCount} tickets for booking ${bookingId}`);
       }
 
-      // Bước 7: Sau đó mới xóa thông tin ghế - xóa theo từng ghế thay vì hàng loạt
+      // Bước 7: KHÔNG XÓA GHẾ - chỉ cập nhật trạng thái để tái sử dụng
+      // Ghế sẽ được tái sử dụng cho booking khác, không cần xóa
       let deletedSeatsCount = 0;
       if (seatIds.length > 0) {
         try {
-          // Xóa từng ghế, không dùng hàm xóa hàng loạt để xử lý lỗi nếu có
-          for (const seatId of seatIds) {
-            try {
-              await Seat.destroy({
-                where: { Seat_ID: seatId },
-                transaction
-              });
-              deletedSeatsCount++;
-            } catch (seatDeleteError) {
-              logger.warn(`Không thể xóa ghế ${seatId} do lỗi: ${seatDeleteError.message}`);
-            }
-          }
-          logger.info(`Deleted ${deletedSeatsCount} seats for booking ${bookingId}`);
-        } catch (bulkDeleteError) {
-          logger.error(`Lỗi khi xóa ghế cho booking ${bookingId}: ${bulkDeleteError.message}`);
-          // Không throw lỗi ở đây, tiếp tục xử lý các bước còn lại
+          // Thay vì xóa ghế, chỉ log thông tin để theo dõi
+          logger.info(`Giải phóng ${seatIds.length} ghế cho booking ${bookingId} (ghế sẽ được tái sử dụng)`);
+          deletedSeatsCount = seatIds.length; // Đặt số lượng để báo cáo
+        } catch (error) {
+          logger.error(`Lỗi khi xử lý ghế cho booking ${bookingId}: ${error.message}`);
         }
       }
 
@@ -2203,6 +2465,15 @@ class BookingService {
       return {
         success: true,
         message: `Booking ${bookingId} has been manually cancelled`,
+        data: {
+          Booking_ID: bookingId,
+          Showtime_ID: booking.Showtime_ID, // ✅ Thêm Showtime_ID để controller có thể sử dụng
+          Status: 'Cancelled',
+          originalStatus: originalStatus,
+          cancelledAt: new Date(),
+          cancelledBy: adminUserId,
+          reason: reason
+        },
         cancellation: {
           bookingId: bookingId,
           originalStatus: originalStatus,
@@ -2216,10 +2487,10 @@ class BookingService {
             phone: booking.User?.Phone_Number
           },
           movie: {
-            name: showtime?.Movie?.Movie_Name,
-            showDate: showtime?.Show_Date,
-            startTime: showtime?.Start_Time,
-            roomName: showtime?.CinemaRoom?.Room_Name
+            name: booking.Showtime?.Movie?.Movie_Name,
+            showDate: booking.Showtime?.Show_Date,
+            startTime: booking.Showtime?.Start_Time,
+            roomName: booking.Showtime?.CinemaRoom?.Room_Name
           },
           financial: {
             originalAmount: booking.Total_Amount,
@@ -2492,6 +2763,106 @@ class BookingService {
 
     // Trả về giá trị mặc định nếu tất cả phương pháp đều thất bại
     return paymentMethod || 'Cash';
+  }
+
+  /**
+   * Lấy thông tin chi tiết của một booking
+   * @param {number} bookingId - ID của booking cần lấy thông tin
+   * @returns {Promise<object>} - Thông tin chi tiết của booking
+   */
+  async getBookingDetail(bookingId) {
+    try {
+      logger.info(`Lấy thông tin chi tiết của booking ${bookingId}`);
+
+      // Tìm booking với các thông tin liên quan
+      const booking = await TicketBooking.findByPk(bookingId, {
+        include: [
+          {
+            model: User,
+            as: 'User',
+            attributes: ['User_ID', 'Full_Name', 'Email', 'Phone_Number']
+          },
+          {
+            model: Showtime,
+            as: 'Showtime',
+            include: [
+              { model: Movie, as: 'Movie' },
+              { model: CinemaRoom, as: 'CinemaRoom' }
+            ]
+          },
+          {
+            model: Promotion,
+            as: 'Promotion'
+          }
+        ]
+      });
+
+      if (!booking) {
+        logger.warn(`Không tìm thấy booking với ID ${bookingId}`);
+        throw new NotFoundError(`Không tìm thấy đơn đặt vé với ID ${bookingId}`);
+      }
+
+      // Lấy thông tin vé và ghế
+      const tickets = await Ticket.findAll({
+        where: { Booking_ID: bookingId },
+        include: [{
+          model: Seat,
+          as: 'Seat',
+          include: [{
+            model: SeatLayout,
+            as: 'SeatLayout'
+          }]
+        }]
+      });
+
+      // Lấy thông tin thanh toán
+      const payment = await Payment.findOne({
+        where: { Booking_ID: bookingId },
+        order: [['Transaction_Date', 'DESC']]
+      });
+
+      // Format thông tin ghế
+      const formattedSeats = tickets.map(ticket => {
+        const layout = ticket.Seat?.SeatLayout;
+        return layout ? `${layout.Row_Label}${layout.Column_Number}` : 'N/A';
+      }).join(', ');
+
+      // Kiểm tra xem có phải staff booking không
+      const isStaffBooking = booking.User_ID === null && booking.Created_By !== null;
+
+      // Format kết quả
+      const result = await this.formatBookingResponse(
+        {
+          ...booking.toJSON(),
+          tickets,
+          Seats: tickets.map(t => t.Seat)
+        },
+        formattedSeats,
+        isStaffBooking
+      );
+
+      // Thêm thông tin thanh toán thực tế (sau khi trừ điểm)
+      if (payment) {
+        result.Payment_Info = {
+          Payment_Method: payment.Payment_Method,
+          Payment_Reference: payment.Payment_Reference,
+          Transaction_Date: payment.Transaction_Date,
+          Payment_Status: payment.Payment_Status,
+          Amount: payment.Amount // Số tiền thực tế thanh toán (sau khi trừ điểm)
+        };
+      }
+
+      // Tính toán và thêm thông tin về tổng tiền gốc (trước khi trừ điểm)
+      const originalAmount = booking.Total_Amount + (booking.Discount_Amount || 0);
+      result.Original_Amount = originalAmount;
+      result.Final_Amount = booking.Total_Amount;
+      
+      logger.info(`Đã lấy thông tin chi tiết của booking ${bookingId} thành công`);
+      return result;
+    } catch (error) {
+      logger.error(`Lỗi khi lấy thông tin chi tiết của booking ${bookingId}: ${error.message}`);
+      throw error;
+    }
   }
 }
 

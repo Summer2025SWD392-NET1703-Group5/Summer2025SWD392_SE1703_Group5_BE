@@ -1,6 +1,7 @@
+
 'use strict';
 
-const { Ticket, TicketBooking, Seat, SeatLayout, CinemaRoom, TicketPricing, PromotionUsage, BookingHistory, Showtime, Movie, User, sequelize } = require('../models');
+const { Ticket, TicketBooking, Seat, SeatLayout, CinemaRoom, Cinema, TicketPricing, PromotionUsage, BookingHistory, Showtime, Movie, User, sequelize } = require('../models');
 const TicketRepository = require('../repositories/TicketRepository');
 const EmailService = require('./emailService');
 const PdfGenerator = require('./pdfGeneratorService');
@@ -8,7 +9,54 @@ const QRCodeGenerator = require('./qrCodeGenerator');
 const TicketHtmlGenerator = require('./ticketHtmlGenerator');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
-const { NotFoundError, BadRequestError, InternalServerError, UnauthorizedError } = require('../utils/errorHandler');
+// Error classes cho TicketService
+class NotFoundError extends Error {
+    constructor(message = 'Not Found') {
+        super(message);
+        this.name = 'NotFoundError';
+        this.statusCode = 404;
+        this.status = 'fail';
+        this.isOperational = true;
+        console.log(`[TICKET SERVICE] NotFoundError: ${message}`);
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class BadRequestError extends Error {
+    constructor(message = 'Bad Request') {
+        super(message);
+        this.name = 'BadRequestError';
+        this.statusCode = 400;
+        this.status = 'fail';
+        this.isOperational = true;
+        console.log(`[TICKET SERVICE] BadRequestError: ${message}`);
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class InternalServerError extends Error {
+    constructor(message = 'Internal Server Error') {
+        super(message);
+        this.name = 'InternalServerError';
+        this.statusCode = 500;
+        this.status = 'error';
+        this.isOperational = true;
+        console.log(`[TICKET SERVICE] InternalServerError: ${message}`);
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class UnauthorizedError extends Error {
+    constructor(message = 'Unauthorized') {
+        super(message);
+        this.name = 'UnauthorizedError';
+        this.statusCode = 401;
+        this.status = 'fail';
+        this.isOperational = true;
+        console.log(`[TICKET SERVICE] UnauthorizedError: ${message}`);
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
 
 class TicketService {
     constructor() {
@@ -70,7 +118,7 @@ class TicketService {
                                 {
                                     model: CinemaRoom,
                                     as: 'CinemaRoom',
-                                    include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
+                                    include: [{ model: Cinema, as: 'Cinema' }]
                                 }
                             ]
                         }
@@ -279,7 +327,7 @@ class TicketService {
                                 {
                                     model: CinemaRoom,
                                     as: 'CinemaRoom',
-                                    include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
+                                    include: [{ model: Cinema, as: 'Cinema' }]
                                 }
                             ]
                         }
@@ -361,7 +409,7 @@ class TicketService {
                 {
                     model: CinemaRoom,
                     as: 'CinemaRoom',
-                    include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
+                    include: [{ model: Cinema, as: 'Cinema' }]
                 }
             ]
         });
@@ -580,7 +628,7 @@ class TicketService {
                                 {
                                     model: CinemaRoom,
                                     as: 'CinemaRoom',
-                                    include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
+                                    include: [{ model: Cinema, as: 'Cinema' }]
                                 }
                             ]
                         }
@@ -678,7 +726,7 @@ class TicketService {
                 {
                     model: CinemaRoom,
                     as: 'CinemaRoom',
-                    include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
+                    include: [{ model: Cinema, as: 'Cinema' }]
                 },
                 {
                     model: TicketBooking,
@@ -750,7 +798,7 @@ class TicketService {
                                 model: CinemaRoom,
                                 as: 'CinemaRoom',
                                 include: [{
-                                    model: sequelize.models.Cinema,
+                                    model: Cinema,
                                     as: 'Cinema'
                                 }]
                             }
@@ -871,7 +919,7 @@ class TicketService {
                         include: [
                             { model: Movie, as: 'Movie' },
                                     { model: CinemaRoom, as: 'CinemaRoom', 
-                                      include: [{ model: sequelize.models.Cinema, as: 'Cinema' }] 
+                                      include: [{ model: Cinema, as: 'Cinema' }]
                                     }
                         ]
                     }
@@ -907,7 +955,7 @@ class TicketService {
                                 include: [
                                     { model: Movie, as: 'Movie' },
                                     { model: CinemaRoom, as: 'CinemaRoom', 
-                                      include: [{ model: sequelize.models.Cinema, as: 'Cinema' }] 
+                                      include: [{ model: Cinema, as: 'Cinema' }]
                                     }
                                 ]
                             }
@@ -1906,46 +1954,70 @@ class TicketService {
         try {
             logger.info(`Lấy thông tin vé với ID: ${ticketId}`);
 
-            const ticket = await Ticket.findByPk(ticketId, {
-                include: [
-                    {
-                        model: Seat,
-                        as: 'Seat',
-                        include: [{ model: SeatLayout, as: 'SeatLayout' }]
-                    },
-                    {
-                        model: TicketBooking,
-                        as: 'TicketBooking',
-                        include: [
-                            { model: User, as: 'User' },
-                            {
-                                model: Showtime,
-                                as: 'Showtime',
-                                include: [
-                                    { model: Movie, as: 'Movie' },
-                                    {
-                                        model: CinemaRoom,
-                                        as: 'CinemaRoom',
-                                        include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
+            // Sử dụng raw query để tránh lỗi với nested includes phức tạp
+            const rawTickets = await sequelize.query(`
+                SELECT
+                    t.Ticket_ID,
+                    t.Ticket_Code,
+                    t.Status as Ticket_Status,
+                    t.Is_Checked_In,
+                    t.Check_In_Time,
+                    t.Final_Price,
+
+                    tb.Booking_ID,
+                    tb.Booking_Date,
+                    tb.Status as Booking_Status,
+                    tb.Total_Amount,
+                    tb.Payment_Deadline,
+
+                    u.User_ID,
+                    u.Full_Name,
+                    u.Email,
+                    u.Phone_Number,
+
+                    s.Seat_ID,
+                    sl.Row_Label,
+                    sl.Column_Number,
+                    sl.Seat_Type,
+
+                    st.Showtime_ID,
+                    st.Show_Date,
+                    st.Start_Time,
+
+                    m.Movie_ID,
+                    m.Movie_Name,
+                    m.Poster_URL,
+                    m.Duration,
+                    m.Rating,
+
+                    cr.Cinema_Room_ID,
+                    cr.Room_Name,
+                    cr.Room_Type,
+
+                    c.Cinema_ID,
+                    c.Cinema_Name,
+                    c.Address as Cinema_Address
+
+                FROM [ksf00691_team03].[Tickets] t
+                INNER JOIN [ksf00691_team03].[Ticket_Bookings] tb ON t.Booking_ID = tb.Booking_ID
+                LEFT JOIN [ksf00691_team03].[Users] u ON tb.User_ID = u.User_ID
+                LEFT JOIN [ksf00691_team03].[Seats] s ON t.Seat_ID = s.Seat_ID
+                LEFT JOIN [ksf00691_team03].[Seat_Layout] sl ON s.Layout_ID = sl.Layout_ID
+                LEFT JOIN [ksf00691_team03].[Showtimes] st ON t.Showtime_ID = st.Showtime_ID
+                LEFT JOIN [ksf00691_team03].[Movies] m ON st.Movie_ID = m.Movie_ID
+                LEFT JOIN [ksf00691_team03].[Cinema_Rooms] cr ON st.Cinema_Room_ID = cr.Cinema_Room_ID
+                LEFT JOIN [ksf00691_team03].[Cinemas] c ON cr.Cinema_ID = c.Cinema_ID
+                WHERE t.Ticket_ID = :ticketId
+            `, {
+                replacements: { ticketId },
+                type: sequelize.QueryTypes.SELECT
             });
 
-            if (!ticket) {
+            if (!rawTickets || rawTickets.length === 0) {
                 throw new NotFoundError('Không tìm thấy vé với ID này');
             }
 
-            const booking = ticket.TicketBooking;
-            const showtime = booking?.Showtime;
-            const movie = showtime?.Movie;
-            const room = showtime?.CinemaRoom;
-            const cinema = room?.Cinema;
-            const seat = ticket.Seat;
-            const seatLayout = seat?.SeatLayout;
+            const rawTicket = rawTickets[0];
 
             // Format date and time (fix UTC timezone issue)
             const formatDateTime = (showDate, startTime) => {
@@ -1979,12 +2051,12 @@ class TicketService {
                 }
             };
 
-            const dateTime = formatDateTime(showtime?.Show_Date, showtime?.Start_Time);
+            const dateTime = formatDateTime(rawTicket.Show_Date, rawTicket.Start_Time);
 
             // Generate QR code for the ticket
             let qrCodeUrl = null;
             try {
-                qrCodeUrl = await QRCodeGenerator.generateQRCode(ticket.Ticket_Code);
+                qrCodeUrl = await QRCodeGenerator.generateQRCode(rawTicket.Ticket_Code);
                 // Đảm bảo QR code trả về đúng format base64 string
                 if (qrCodeUrl && typeof qrCodeUrl !== 'string') {
                     // Nếu là Buffer, chuyển thành base64 string
@@ -1993,65 +2065,66 @@ class TicketService {
                     }
                 }
             } catch (qrError) {
-                logger.warn(`Không thể tạo QR code cho vé ${ticket.Ticket_Code}: ${qrError.message}`);
+                logger.warn(`Không thể tạo QR code cho vé ${rawTicket.Ticket_Code}: ${qrError.message}`);
             }
 
             // Build complete ticket information
             const ticketInfo = {
                 success: true,
                 ticket_details: {
-                    ticket_id: ticket.Ticket_ID,
-                    ticket_code: ticket.Ticket_Code,
-                    status: ticket.Status,
-                    is_checked_in: ticket.Is_Checked_In,
-                    check_in_time: ticket.Check_In_Time,
-                    final_price: ticket.Final_Price
+                    ticket_id: rawTicket.Ticket_ID,
+                    ticket_code: rawTicket.Ticket_Code,
+                    status: rawTicket.Ticket_Status,
+                    is_checked_in: rawTicket.Is_Checked_In,
+                    check_in_time: rawTicket.Check_In_Time,
+                    final_price: rawTicket.Final_Price
                 },
                 cinema_info: {
-                    cinema_id: cinema?.Cinema_ID,
-                    cinema_name: cinema?.Cinema_Name || 'Galaxy Cinema',
-                    cinema_address: cinema?.Address || ''
+                    cinema_id: rawTicket.Cinema_ID,
+                    cinema_name: rawTicket.Cinema_Name || 'Galaxy Cinema',
+                    cinema_address: rawTicket.Cinema_Address || ''
                 },
                 room_info: {
-                    room_id: room?.Cinema_Room_ID,
-                    room_name: room?.Room_Name || 'Phòng Chiếu',
-                    room_type: room?.Room_Type || '2D'
+                    room_id: rawTicket.Cinema_Room_ID,
+                    room_name: rawTicket.Room_Name || 'Phòng Chiếu',
+                    room_type: rawTicket.Room_Type || '2D'
                 },
                 seat_info: {
-                    seat_id: seat?.Seat_ID,
-                    seat_label: seatLayout ? `${seatLayout.Row_Label}${seatLayout.Column_Number}` : 'N/A',
-                    row_label: seatLayout?.Row_Label || '',
-                    column_number: seatLayout?.Column_Number || '',
-                    seat_type: seatLayout?.Seat_Type || 'Thường'
+                    seat_id: rawTicket.Seat_ID,
+                    seat_label: rawTicket.Row_Label && rawTicket.Column_Number ?
+                        `${rawTicket.Row_Label}${rawTicket.Column_Number}` : 'N/A',
+                    row_label: rawTicket.Row_Label || '',
+                    column_number: rawTicket.Column_Number || '',
+                    seat_type: rawTicket.Seat_Type || 'Thường'
                 },
                 showtime_info: {
-                    showtime_id: showtime?.Showtime_ID,
+                    showtime_id: rawTicket.Showtime_ID,
                     show_date_formatted: dateTime.date,
                     show_time_formatted: dateTime.time,
-                    show_date_raw: showtime?.Show_Date
+                    show_date_raw: rawTicket.Show_Date
                 },
                 movie_info: {
-                    movie_id: movie?.Movie_ID,
-                    movie_name: movie?.Movie_Name || 'Unknown Movie',
-                    movie_poster: movie?.Poster_URL || '',
-                    duration: movie?.Duration || 0,
-                    rating: movie?.Rating || ''
+                    movie_id: rawTicket.Movie_ID,
+                    movie_name: rawTicket.Movie_Name || 'Unknown Movie',
+                    movie_poster: rawTicket.Poster_URL || '',
+                    duration: rawTicket.Duration || 0,
+                    rating: rawTicket.Rating || ''
                 },
                 booking_info: {
-                    booking_id: booking?.Booking_ID,
-                    booking_date: booking?.Booking_Date,
-                    booking_status: booking?.Status,
-                    total_amount: booking?.Total_Amount,
-                    payment_deadline: booking?.Payment_Deadline
+                    booking_id: rawTicket.Booking_ID,
+                    booking_date: rawTicket.Booking_Date,
+                    booking_status: rawTicket.Booking_Status,
+                    total_amount: rawTicket.Total_Amount,
+                    payment_deadline: rawTicket.Payment_Deadline
                 },
                 customer_info: {
-                    user_id: booking?.User?.User_ID,
-                    full_name: booking?.User?.Full_Name || '',
-                    email: booking?.User?.Email || '',
-                    phone: booking?.User?.Phone || ''
+                    user_id: rawTicket.User_ID,
+                    full_name: rawTicket.Full_Name || '',
+                    email: rawTicket.Email || '',
+                    phone: rawTicket.Phone_Number || ''
                 },
                 qr_code: {
-                    data: ticket.Ticket_Code,
+                    data: rawTicket.Ticket_Code,
                     image_url: qrCodeUrl
                 },
                 usage_instructions: [
@@ -2083,89 +2156,97 @@ class TicketService {
         try {
             logger.info(`Truy xuất vé cho người dùng ${userId}`);
 
-            const tickets = await Ticket.findAll({
-                include: [
-                    {
-                        model: TicketBooking,
-                        as: 'TicketBooking',
-                        where: { User_ID: userId },
-                        required: true,
-                        include: [
-                            {
-                                model: Showtime,
-                                as: 'Showtime',
-                                include: [
-                                    { model: Movie, as: 'Movie' },
-                                    {
-                                        model: CinemaRoom,
-                                        as: 'CinemaRoom',
-                                        include: [{ model: sequelize.models.Cinema, as: 'Cinema' }]
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        model: Seat,
-                        as: 'Seat',
-                        include: [{
-                            model: SeatLayout,
-                            as: 'SeatLayout'
-                        }]
-                    }
-                ],
-                order: [['Ticket_ID', 'DESC']]
+            // Sử dụng raw query để tránh lỗi với nested includes phức tạp
+            const rawTickets = await sequelize.query(`
+                SELECT
+                    t.Ticket_ID,
+                    t.Ticket_Code,
+                    t.Booking_ID,
+                    t.Status as Ticket_Status,
+                    t.Is_Checked_In,
+                    t.Final_Price,
+                    t.Check_In_Time,
+
+                    tb.Booking_Date,
+                    tb.User_ID,
+
+                    s.Seat_ID,
+                    sl.Row_Label,
+                    sl.Column_Number,
+
+                    st.Showtime_ID,
+                    st.Show_Date,
+                    st.Start_Time,
+
+                    m.Movie_ID,
+                    m.Movie_Name,
+                    m.Poster_URL,
+
+                    cr.Cinema_Room_ID,
+                    cr.Room_Name,
+
+                    c.Cinema_ID,
+                    c.Cinema_Name
+
+                FROM [ksf00691_team03].[Tickets] t
+                INNER JOIN [ksf00691_team03].[Ticket_Bookings] tb ON t.Booking_ID = tb.Booking_ID
+                LEFT JOIN [ksf00691_team03].[Seats] s ON t.Seat_ID = s.Seat_ID
+                LEFT JOIN [ksf00691_team03].[Seat_Layout] sl ON s.Layout_ID = sl.Layout_ID
+                LEFT JOIN [ksf00691_team03].[Showtimes] st ON t.Showtime_ID = st.Showtime_ID
+                LEFT JOIN [ksf00691_team03].[Movies] m ON st.Movie_ID = m.Movie_ID
+                LEFT JOIN [ksf00691_team03].[Cinema_Rooms] cr ON st.Cinema_Room_ID = cr.Cinema_Room_ID
+                LEFT JOIN [ksf00691_team03].[Cinemas] c ON cr.Cinema_ID = c.Cinema_ID
+                WHERE tb.User_ID = :userId
+                ORDER BY t.Ticket_ID DESC
+            `, {
+                replacements: { userId },
+                type: sequelize.QueryTypes.SELECT
             });
 
             const formattedTickets = [];
 
-            for (const ticket of tickets) {
-                const booking = ticket.TicketBooking;
-                if (!booking) continue;
-
-                const showtime = booking.Showtime;
-                if (!showtime) continue;
-
-                const movie = showtime.Movie;
-                const room = showtime.CinemaRoom;
-                const cinema = room?.Cinema;
-                const seat = ticket.Seat;
-                const seatLayout = seat?.SeatLayout;
-
+            for (const rawTicket of rawTickets) {
                 // Format start_time để tránh lỗi UTC (fix 1970 issue)
-                let formattedStartTime = showtime.Start_Time;
-                if (typeof showtime.Start_Time === 'string') {
+                let formattedStartTime = rawTicket.Start_Time;
+                if (typeof rawTicket.Start_Time === 'string') {
                     // Nếu là string dạng "14:00:00" hoặc "14:00", giữ nguyên
-                    formattedStartTime = showtime.Start_Time;
-                } else if (showtime.Start_Time instanceof Date) {
+                    formattedStartTime = rawTicket.Start_Time;
+                } else if (rawTicket.Start_Time instanceof Date) {
                     // Nếu là Date object, chỉ lấy HH:MM
-                    const hours = showtime.Start_Time.getUTCHours().toString().padStart(2, '0');
-                    const minutes = showtime.Start_Time.getUTCMinutes().toString().padStart(2, '0');
+                    const hours = rawTicket.Start_Time.getUTCHours().toString().padStart(2, '0');
+                    const minutes = rawTicket.Start_Time.getUTCMinutes().toString().padStart(2, '0');
                     formattedStartTime = `${hours}:${minutes}:00`;
                 }
 
                 formattedTickets.push({
-                    ticket_id: ticket.Ticket_ID,
-                    ticket_code: ticket.Ticket_Code,
-                    booking_id: ticket.Booking_ID,
-                    status: ticket.Status,
-                    is_checked_in: ticket.Is_Checked_In,
-                    final_price: ticket.Final_Price,
-                    booking_date: booking.Booking_Date,
-                    movie_info: movie ? {
-                        movie_id: movie.Movie_ID,
-                        movie_name: movie.Movie_Name,
-                        poster_url: movie.Poster_URL
+                    ticket_id: rawTicket.Ticket_ID,
+                    ticket_code: rawTicket.Ticket_Code,
+                    booking_id: rawTicket.Booking_ID,
+                    status: rawTicket.Ticket_Status,
+                    is_checked_in: rawTicket.Is_Checked_In,
+                    final_price: rawTicket.Final_Price,
+                    check_in_time: rawTicket.Check_In_Time,
+                    booking_date: rawTicket.Booking_Date,
+                    movie_info: rawTicket.Movie_ID ? {
+                        movie_id: rawTicket.Movie_ID,
+                        movie_name: rawTicket.Movie_Name,
+                        poster_url: rawTicket.Poster_URL
                     } : null,
-                    showtime_info: showtime ? {
-                        showtime_id: showtime.Showtime_ID,
-                        show_date: showtime.Show_Date,
-                        start_time: formattedStartTime, // ← Fixed timezone issue
-                        room_name: room?.Room_Name,
-                        cinema_id: cinema?.Cinema_ID,
-                        cinema_name: cinema?.Cinema_Name
+                    showtime_info: rawTicket.Showtime_ID ? {
+                        showtime_id: rawTicket.Showtime_ID,
+                        show_date: rawTicket.Show_Date,
+                        start_time: formattedStartTime,
+                        room_name: rawTicket.Room_Name,
+                        cinema_id: rawTicket.Cinema_ID,
+                        cinema_name: rawTicket.Cinema_Name
                     } : null,
-                    seat_info: seatLayout ? `${seatLayout.Row_Label}${seatLayout.Column_Number}` : 'Không có'
+                    room_info: {
+                        room_name: rawTicket.Room_Name,
+                        cinema_name: rawTicket.Cinema_Name
+                    },
+                    seat_info: rawTicket.Row_Label && rawTicket.Column_Number ?
+                        { seat_label: `${rawTicket.Row_Label}${rawTicket.Column_Number}` } :
+                        { seat_label: 'Không có' }
                 });
             }
 

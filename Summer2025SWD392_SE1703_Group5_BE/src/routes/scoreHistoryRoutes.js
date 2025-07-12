@@ -188,7 +188,13 @@ const { authMiddleware } = require('../middlewares/authMiddleware'); // ⚠️ S
  *         description: Lỗi server nội bộ
  */
 
-// Route definition
-router.get('/user/:userId', authMiddleware, scoreHistoryController.getUserScoreHistory);
+/**
+
+
+ * Route definition
+router.get('/user/userId', authMiddleware, scoreHistoryController.getUserScoreHistory);
+
+
+ */
 
 module.exports = router;

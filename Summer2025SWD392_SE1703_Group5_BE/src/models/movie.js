@@ -23,6 +23,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: false,
     },
+    Premiere_Date: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     End_Date: DataTypes.DATE,
     Production_Company: DataTypes.STRING,
     Director: DataTypes.STRING,
@@ -49,7 +53,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'Movie',
     tableName: 'Movies',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
   return Movie;

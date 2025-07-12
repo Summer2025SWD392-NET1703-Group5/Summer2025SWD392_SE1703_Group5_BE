@@ -21,6 +21,7 @@ class PromotionController {
         this.removePromotion = this.removePromotion.bind(this);
         this.getAvailablePromotions = this.getAvailablePromotions.bind(this);
         this.getUserPromotions = this.getUserPromotions.bind(this);
+        this.getAvailablePromotionsForBooking = this.getAvailablePromotionsForBooking.bind(this);
     }
 
     /**
@@ -325,8 +326,82 @@ class PromotionController {
             next(error);
         }
     }
+
+    /**
+     * Lấy danh sách mã khuyến mãi phù hợp với booking và chưa được sử dụng
+     * @route GET /api/promotions/available/:bookingId
+     * @access Private
+     */
+    async getAvailablePromotionsForBooking(req, res, next) {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Không thể xác định người dùng'
+                });
+            }
+
+            const { bookingId } = req.params;
+            const bookingIdInt = parseInt(bookingId, 10);
+            if (isNaN(bookingIdInt) || bookingIdInt <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Booking ID không hợp lệ'
+                });
+            }
+
+            logger.info(`Controller: GET /api/promotions/available/${bookingIdInt} - getAvailablePromotionsForBooking`);
+
+            const result = await this.promotionService.getAvailablePromotionsForBooking(bookingIdInt, userId);
+
+            res.status(200).json(result);
+        } catch (error) {
+            logger.error(`Controller: Error in getAvailablePromotionsForBooking for Booking ID ${req.params.bookingId}`, error);
+            res.status(500).json({
+                success: false,
+                message: 'Có lỗi xảy ra khi lấy danh sách mã khuyến mãi phù hợp'
+            });
+        }
+    }
+
+    /**
+     * Xóa điểm khỏi booking
+     * @route DELETE /api/promotions/points/:bookingId
+     * @access Private
+     */
+    async removePointsFromBooking(req, res, next) {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            if (!userId) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'Không thể xác định người dùng'
+                });
+            }
+
+            const { bookingId } = req.params;
+            const bookingIdInt = parseInt(bookingId, 10);
+            if (isNaN(bookingIdInt) || bookingIdInt <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Booking ID không hợp lệ'
+                });
+            }
+
+            logger.info(`Controller: DELETE /api/promotions/points/${bookingIdInt} - removePointsFromBooking`);
+
+            const result = await this.promotionService.removePointsFromBooking(bookingIdInt, userId);
+
+            res.status(200).json(result);
+        } catch (error) {
+            logger.error(`Controller: Error in removePointsFromBooking for Booking ID ${req.params.bookingId}`, error);
+            res.status(500).json({
+                success: false,
+                message: 'Có lỗi xảy ra khi xóa điểm khỏi booking'
+            });
+        }
+    }
 }
 
 module.exports = new PromotionController();
-
-s

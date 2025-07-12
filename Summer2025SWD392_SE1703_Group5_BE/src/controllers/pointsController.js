@@ -117,44 +117,131 @@ class PointsController {
 
             logger.info(`Applying points discount to booking ${bookingId}, requested by user ${currentUserId}, role: ${userRole}`);
 
-            // Gọi service với userId hiện tại
+            // ✅ VALIDATION BẮT BUỘC: Kiểm tra booking trước khi xử lý
+            const { TicketBooking } = require('../models');
+            const booking = await TicketBooking.findByPk(parseInt(bookingId));
+            
+            if (!booking) {
+                return res.status(404).json({ 
+                    success: false,
+                    message: 'Không tìm thấy đơn đặt vé' 
+                });
+            }
+
+            // ✅ VALIDATION CHÍNH: Ngăn apply điểm nhiều lần
+            if (booking.Points_Used && booking.Points_Used > 0) {
+                logger.warn(`Attempt to apply points multiple times to booking ${bookingId} (already used: ${booking.Points_Used})`);
+                return res.status(400).json({
+                    success: false,
+                    message: `Đơn đặt vé này đã sử dụng ${booking.Points_Used.toLocaleString('vi-VN')} điểm trước đó. Không thể áp dụng điểm nhiều lần.`,
+                    error_code: 'POINTS_ALREADY_APPLIED',
+                    details: {
+                        booking_id: parseInt(bookingId),
+                        points_already_used: booking.Points_Used,
+                        booking_status: booking.Status
+                    }
+                });
+            }
+
+            // Tính giới hạn điểm tối đa (50% tổng tiền hóa đơn)
+            const maxPointsAllowed = Math.floor(booking.Total_Amount * 0.5);
+            const requestedPoints = parseInt(pointsToUse);
+
+            // ✅ KIỂM TRA VÀ THÔNG BÁO NẾU VƯỢT QUÁ GIỚI HẠN
+            if (requestedPoints > maxPointsAllowed) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Số điểm vượt quá giới hạn cho phép! Bạn chỉ có thể sử dụng tối đa ${maxPointsAllowed.toLocaleString('vi-VN')} điểm (50% giá trị hóa đơn ${booking.Total_Amount.toLocaleString('vi-VN')}đ).`,
+                    error_code: 'POINTS_LIMIT_EXCEEDED',
+                    details: {
+                        requested_points: requestedPoints,
+                        max_points_allowed: maxPointsAllowed,
+                        total_amount: booking.Total_Amount,
+                        limit_percentage: 50
+                    }
+                });
+            }
+
+            // THAY ĐỔI: Sử dụng userId từ booking nếu có
+            const userIdForPoints = booking.User_ID || currentUserId;
+            logger.info(`Using user ID ${userIdForPoints} for points check (booking.User_ID: ${booking.User_ID}, currentUserId: ${currentUserId})`);
+
+            // ✅ KIỂM TRA ĐIỂM KHẢ DỤNG - từ API points/user/{id}
+            const userPoints = await pointsService.getUserPointsAsync(userIdForPoints);
+            if (requestedPoints > userPoints.total_points) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Số dư điểm không đủ! Bạn có ${userPoints.total_points.toLocaleString('vi-VN')} điểm, nhưng muốn sử dụng ${requestedPoints.toLocaleString('vi-VN')} điểm.`,
+                    error_code: 'INSUFFICIENT_POINTS',
+                    details: {
+                        requested_points: requestedPoints,
+                        available_points: userPoints.total_points,
+                        user_id: userIdForPoints
+                    }
+                });
+            }
+
+            // Gọi service với userId từ booking
             const bookingResponse = await pointsService.applyPointsDiscount(
                 parseInt(bookingId),
-                currentUserId,
-                parseInt(pointsToUse)
+                userIdForPoints, // Sử dụng userId từ booking thay vì currentUserId
+                requestedPoints
             );
 
-            return res.status(200).json(bookingResponse);
+            // ✅ TRẢ VỀ THÔNG BÁO THÀNH CÔNG VỚI CHI TIẾT
+            return res.status(200).json({
+                success: true,
+                message: `Đã áp dụng thành công ${requestedPoints.toLocaleString('vi-VN')} điểm giảm giá!`,
+                data: bookingResponse
+            });
 
         } catch (error) {
             if (error.message.includes('không tìm thấy')) {
                 logger.warn('Booking not found:', error.message);
-                return res.status(404).json({ message: error.message });
+                return res.status(404).json({ 
+                    success: false,
+                    message: error.message 
+                });
             }
 
             if (error.message.includes('đã bị hủy')) {
                 logger.warn('Cannot apply points to cancelled booking:', error.message);
-                return res.status(400).json({ message: error.message });
+                return res.status(400).json({ 
+                    success: false,
+                    message: error.message 
+                });
             }
 
             if (error.message.includes('đã thanh toán') || error.message.includes('hoàn thành')) {
                 logger.warn('Cannot apply points to completed/confirmed booking:', error.message);
-                return res.status(400).json({ message: error.message });
+                return res.status(400).json({ 
+                    success: false,
+                    message: error.message 
+                });
             }
 
-            if (error.message.includes('đã sử dụng')) {
-                logger.warn('Points already applied to this booking:', error.message);
-                return res.status(400).json({ message: error.message });
+            // ✅ XỬ LÝ LỖI APPLY ĐIỂM NHIỀU LẦN TỪ SERVICE
+            if (error.message.includes('đã sử dụng') && error.message.includes('điểm trước đó')) {
+                logger.warn('Points already applied to this booking (from service):', error.message);
+                return res.status(400).json({ 
+                    success: false,
+                    message: error.message,
+                    error_code: 'POINTS_ALREADY_APPLIED'
+                });
             }
 
             if (error.message.includes('không đủ') || error.message.includes('không hợp lệ')) {
                 logger.warn('Invalid operation when applying points:', error.message);
-                return res.status(400).json({ message: error.message });
+                return res.status(400).json({ 
+                    success: false,
+                    message: error.message 
+                });
             }
 
             const bookingIdToLog = req.params.bookingId;
             logger.error(`Error applying points discount to booking ${bookingIdToLog}:`, error);
             return res.status(500).json({
+                success: false,
                 message: 'Lỗi khi áp dụng điểm giảm giá',
                 error: error.message
             });

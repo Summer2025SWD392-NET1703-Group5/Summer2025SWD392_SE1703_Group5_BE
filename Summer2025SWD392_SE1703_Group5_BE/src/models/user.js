@@ -55,12 +55,19 @@ module.exports = (sequelize, DataTypes) => {
     /**
      * Cập nhật trạng thái tài khoản
      * @param {number} userId - ID của user
-     * @param {string} status - Trạng thái mới (Active, Pending_Verification, Locked, etc.)
+     * @param {string} status - Trạng thái mới (Active, Inactive, Deleted)
      * @returns {Promise<boolean>} True nếu cập nhật thành công
      */
     static async updateStatus(userId, status) {
       try {
         console.log(`[User.updateStatus] Updating user ${userId} status to: ${status}`);
+
+        // Kiểm tra status có hợp lệ không (chỉ cho phép 3 giá trị)
+        const validStatuses = ['Active', 'Inactive', 'Deleted'];
+        if (!validStatuses.includes(status)) {
+          throw new Error(`Trạng thái không hợp lệ. Chỉ cho phép các giá trị: ${validStatuses.join(', ')}`);
+        }
+
         const [updatedRows] = await this.update(
           { Account_Status: status },
           { where: { User_ID: userId } }
@@ -161,7 +168,7 @@ module.exports = (sequelize, DataTypes) => {
     Account_Status: {
       type: DataTypes.STRING(20),   // nvarchar(20)
       allowNull: false,
-      defaultValue: 'Active'        // Default trong DB là 'Active'
+      defaultValue: 'Active',       // Default trong DB là 'Active'
     },
     Created_At: {
       type: DataTypes.DATE,         // datetime
@@ -183,7 +190,7 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'User',
     tableName: 'Users',
-    schema: 'db_ab91f9_gr5',
+    schema: 'ksf00691_team03',
     timestamps: false,
   });
 
