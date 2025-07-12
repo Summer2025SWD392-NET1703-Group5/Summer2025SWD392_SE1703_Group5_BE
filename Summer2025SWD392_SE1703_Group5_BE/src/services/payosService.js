@@ -264,33 +264,37 @@ class PayOSService {
             }
 
             try {
-                // Thực hiện cập nhật points và thêm lịch sử trong một lần query để tối ưu
+                // 🔧 FIX: Kiểm tra User_ID trước khi cộng điểm - chỉ cộng cho user thường, không cộng cho khách vãng lai
                 const query = `
                     -- Lấy user_id từ booking
                     DECLARE @userId INT;
                     SELECT @userId = User_ID FROM [ksf00691_team03].[Ticket_Bookings] WHERE Booking_ID = @bookingId;
 
-                    -- Kiểm tra xem user có bản ghi User_Points chưa
-                    DECLARE @userPointsId INT;
-                    SELECT @userPointsId = UserPoints_ID FROM [ksf00691_team03].[User_Points] WHERE User_ID = @userId;
-
-                    -- Nếu chưa có, thêm mới
-                    IF @userPointsId IS NULL
+                    -- 🔧 KIỂM TRA: Chỉ cộng điểm nếu User_ID không null (không phải khách vãng lai)
+                    IF @userId IS NOT NULL
                     BEGIN
-                        INSERT INTO [ksf00691_team03].[User_Points]
-                        (User_ID, Total_Points, Last_Updated)
-                        VALUES (@userId, @points, GETDATE());
-                    END
-                    ELSE
-                    -- Nếu đã có, cập nhật
-                    BEGIN
-                        UPDATE [ksf00691_team03].[User_Points]
-                        SET Total_Points = Total_Points + @points,
-                            Last_Updated = GETDATE()
-                        WHERE User_ID = @userId;
+                        -- Kiểm tra xem user có bản ghi User_Points chưa
+                        DECLARE @userPointsId INT;
+                        SELECT @userPointsId = UserPoints_ID FROM [ksf00691_team03].[User_Points] WHERE User_ID = @userId;
+
+                        -- Nếu chưa có, thêm mới
+                        IF @userPointsId IS NULL
+                        BEGIN
+                            INSERT INTO [ksf00691_team03].[User_Points]
+                            (User_ID, Total_Points, Last_Updated)
+                            VALUES (@userId, @points, GETDATE());
+                        END
+                        ELSE
+                        -- Nếu đã có, cập nhật
+                        BEGIN
+                            UPDATE [ksf00691_team03].[User_Points]
+                            SET Total_Points = Total_Points + @points,
+                                Last_Updated = GETDATE()
+                            WHERE User_ID = @userId;
+                        END
                     END
 
-                    -- Trả về userId để log
+                    -- Trả về userId để log (có thể null cho khách vãng lai)
                     SELECT @userId as UserId;
                 `;
 
@@ -299,46 +303,53 @@ class PayOSService {
                 request.input('points', sql.Int, pointsToAdd);
                 const result = await request.query(query);
 
-                // Thêm lịch sử điểm nếu bảng Points_Earning tồn tại
-                try {
-                    // Kiểm tra xem bảng Points_Earning tồn tại không
-                    const checkTableQuery = `
-                        SELECT COUNT(*) as table_exists 
-                        FROM INFORMATION_SCHEMA.TABLES 
-                        WHERE TABLE_SCHEMA = 'ksf00691_team03' 
-                        AND TABLE_NAME = 'Points_Earning'
-                    `;
-                    const checkRequest = dbTransaction.request();
-                    const checkResult = await checkRequest.query(checkTableQuery);
+                const userId = result.recordset[0]?.UserId;
 
-                    if (checkResult.recordset[0].table_exists > 0) {
-                        // Bảng tồn tại, thêm lịch sử
-                        const historyQuery = `
-                            INSERT INTO [ksf00691_team03].[Points_Earning]
-                            (User_ID, Points_Earned, Activity_Type, Reference_ID, Earning_Date, Notes)
-                            VALUES (@userId, @points, 'Booking Reward', @bookingId, GETDATE(), 'Điểm thưởng từ thanh toán đặt vé');
+                // 🔧 LOG: Thông báo rõ ràng về việc cộng điểm
+                if (userId) {
+                    logger.info(`✅ [REWARD_POINTS] Đã cộng ${pointsToAdd} điểm cho user ${userId} từ booking ${bookingId}`);
+                } else {
+                    logger.info(`ℹ️ [REWARD_POINTS] Không cộng điểm cho booking ${bookingId} - khách vãng lai (User_ID = null)`);
+                }
+
+                // Thêm lịch sử điểm nếu bảng Points_Earning tồn tại và có userId
+                if (userId) {
+                    try {
+                        // Kiểm tra xem bảng Points_Earning tồn tại không
+                        const checkTableQuery = `
+                            SELECT COUNT(*) as table_exists
+                            FROM INFORMATION_SCHEMA.TABLES
+                            WHERE TABLE_SCHEMA = 'ksf00691_team03'
+                            AND TABLE_NAME = 'Points_Earning'
                         `;
+                        const checkRequest = dbTransaction.request();
+                        const checkResult = await checkRequest.query(checkTableQuery);
 
-                        const historyRequest = dbTransaction.request();
-                        historyRequest.input('userId', sql.Int, result.recordset[0]?.UserId);
-                        historyRequest.input('points', sql.Int, pointsToAdd);
-                        historyRequest.input('bookingId', sql.Int, bookingId);
-                        await historyRequest.query(historyQuery);
+                        if (checkResult.recordset[0].table_exists > 0) {
+                            // Bảng tồn tại, thêm lịch sử
+                            const historyQuery = `
+                                INSERT INTO [ksf00691_team03].[Points_Earning]
+                                (User_ID, Points_Earned, Activity_Type, Reference_ID, Earning_Date, Notes)
+                                VALUES (@userId, @points, 'Booking Reward', @bookingId, GETDATE(), 'Điểm thưởng từ thanh toán đặt vé');
+                            `;
 
-                        logger.info(`Đã thêm lịch sử điểm thưởng vào Points_Earning`);
+                            const historyRequest = dbTransaction.request();
+                            historyRequest.input('userId', sql.Int, userId);
+                            historyRequest.input('points', sql.Int, pointsToAdd);
+                            historyRequest.input('bookingId', sql.Int, bookingId);
+                            await historyRequest.query(historyQuery);
+
+                            logger.info(`✅ [REWARD_POINTS] Đã thêm lịch sử điểm thưởng vào Points_Earning cho user ${userId}`);
+                        }
+                    } catch (historyError) {
+                        logger.warn(`⚠️ [REWARD_POINTS] Không thể thêm lịch sử điểm thưởng: ${historyError.message}`);
                     }
-                } catch (historyError) {
-                    // Bỏ qua lỗi khi thêm lịch sử, vẫn cộng điểm thành công
-                    logger.warn(`Không thể thêm lịch sử điểm, nhưng vẫn cộng điểm thành công: ${historyError.message}`);
                 }
 
                 // Chỉ commit nếu chúng ta đã tạo transaction mới
                 if (shouldCloseConnection) {
                     await dbTransaction.commit();
                 }
-
-                const userId = result.recordset[0]?.UserId;
-                logger.info(`Đã cộng ${pointsToAdd} điểm thưởng cho user ${userId} từ booking ${bookingId}`);
 
                 return { points: pointsToAdd, userId };
             } catch (error) {

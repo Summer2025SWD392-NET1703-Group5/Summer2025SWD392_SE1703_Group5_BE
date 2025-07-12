@@ -10,8 +10,8 @@ const { Op } = require('sequelize');
 class PromotionExpirationService {
     constructor() {
         this.logger = logger;
-        // Khoảng thời gian chạy (mặc định là 6 giờ một lần)
-        this.checkInterval = 6 * 60 * 60 * 1000; // 6 giờ = 21600000ms
+        // 🔧 TEMP: Giảm thời gian chạy để test (5 phút một lần thay vì 6 giờ)
+        this.checkInterval = 1 * 60 * 1000; // 5 phút = 300000ms (thay vì 6 giờ)
 
         // Biến để lưu trữ interval ID
         this.intervalId = null;
@@ -47,22 +47,15 @@ class PromotionExpirationService {
         try {
             this.logger.info('[PromotionExpirationService] Đang khởi động service ẩn promotion hết hạn...');
             
-            // Chạy lần đầu tiên ngay lập tức
+            // 🔧 TEMP: Chạy lần đầu tiên ngay lập tức và thiết lập interval ngay
             await this.executeCheck();
-            
-            // Thiết lập để chạy vào nửa đêm đầu tiên
-            const timeToMidnight = this.calculateTimeToNextMidnight();
-            this.logger.info(`[PromotionExpirationService] Sẽ chạy lần tiếp theo vào nửa đêm (sau ${Math.round(timeToMidnight / (60 * 1000))} phút)`);
-            
-            this.timeoutId = setTimeout(async () => {
+
+            // 🔧 TEMP: Thiết lập interval để chạy định kỳ mỗi 5 phút (thay vì chờ đến nửa đêm)
+            this.logger.info(`[PromotionExpirationService] Sẽ chạy lại sau mỗi ${this.checkInterval / (60 * 1000)} phút`);
+
+            this.intervalId = setInterval(async () => {
                 await this.executeCheck();
-                
-                // Sau đó thiết lập interval để chạy định kỳ mỗi 6 giờ
-                this.intervalId = setInterval(async () => {
-                    await this.executeCheck();
-                }, this.checkInterval);
-                
-            }, timeToMidnight);
+            }, this.checkInterval);
 
             this.isRunning = true;
             this.logger.info(`[PromotionExpirationService] ✅ Service đã khởi động thành công!`);
@@ -124,6 +117,29 @@ class PromotionExpirationService {
                     totalChecks: this.totalChecks
                 };
             }
+
+            // 🔧 DEBUG: Kiểm tra tất cả promotion Active trước
+            const [allActivePromotions] = await sequelize.query(`
+                SELECT
+                    p.Promotion_ID,
+                    p.Title,
+                    p.Promotion_Code,
+                    p.Status,
+                    p.End_Date,
+                    CAST(GETDATE() AS DATE) as CurrentDate,
+                    CASE
+                        WHEN CAST(p.End_Date AS DATE) < CAST(GETDATE() AS DATE) THEN 'SHOULD_EXPIRE'
+                        ELSE 'VALID'
+                    END as ShouldExpire
+                FROM ksf00691_team03.Promotions p
+                WHERE p.Status = 'Active'
+                ORDER BY p.End_Date ASC
+            `);
+
+            this.logger.info(`[PromotionExpirationService] 📊 Tổng cộng ${allActivePromotions.length} promotion Active:`);
+            allActivePromotions.forEach(promo => {
+                this.logger.info(`   - ID: ${promo.Promotion_ID} | Code: ${promo.Promotion_Code} | End: ${promo.End_Date} | ${promo.ShouldExpire}`);
+            });
 
             // Tìm các promotion cần expire bằng SQL trực tiếp
             const [expiredPromotionsFromSQL] = await sequelize.query(`

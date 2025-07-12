@@ -1332,21 +1332,32 @@ class PromotionService {
     }
 
     async getAvailablePromotionsAsync() {
-        const now = new Date();
+        // 🔧 FIX: Lấy ngày hiện tại chỉ có ngày (không có giờ) để so sánh chính xác
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Set về 00:00:00.000
 
-        // Lấy tất cả khuyến mãi, không filter theo trạng thái hoặc ngày hiệu lực
+        logger.info(`[PromotionService] getAvailablePromotionsAsync - Today: ${today.toISOString()}`);
+
+        // 🔧 FIX: Chỉ lấy promotion Active và đang trong thời gian hiệu lực
         const promotions = await this.models.Promotion.findAll({
+            where: {
+                Status: PROMOTION_STATUS.ACTIVE,
+                Start_Date: { [Op.lte]: today },
+                End_Date: { [Op.gte]: today }
+            },
             order: [
-                ['Status', 'ASC'],  // Sắp xếp theo trạng thái để Active lên đầu
-                ['Start_Date', 'DESC']  // Rồi đến ngày bắt đầu gần nhất
+                ['Start_Date', 'DESC']  // Sắp xếp theo ngày bắt đầu gần nhất
             ]
         });
 
+        logger.info(`[PromotionService] Found ${promotions.length} available promotions`);
+
         return promotions.map(p => {
-            // Xác định khuyến mãi có đang hoạt động hay không
-            const isActive = p.Status === PROMOTION_STATUS.ACTIVE &&
-                p.Start_Date <= now &&
-                p.End_Date >= now;
+            // 🔧 FIX: Vì đã filter ở query, tất cả promotion ở đây đều active
+            const isActive = true; // Đã được filter ở query level
+
+            // 🔧 DEBUG: Log chi tiết để debug
+            logger.info(`[PromotionService] Available Promotion ${p.Promotion_Code}: IsActive=${isActive}`);
 
             const usageRemaining = p.Usage_Limit ? p.Usage_Limit - p.Current_Usage : null;
 
