@@ -1,11 +1,9 @@
-// File: src/controllers/payosController.js
 const PayOSService = require('../services/payosService');
 const { getConnection } = require('../config/database');
 const sql = require('mssql');
 const winston = require('winston');
 const path = require('path');
 
-// Logger
 const logger = winston.createLogger({
     level: 'info',
     format: winston.format.combine(
@@ -19,7 +17,7 @@ const logger = winston.createLogger({
                 winston.format.simple()
             )
         }),
-        // Thêm file transport để lưu log vào thư mục logs
+        
         new winston.transports.File({
             filename: path.join(__dirname, '../logs/payos-controller.log')
         })
@@ -29,7 +27,7 @@ const logger = winston.createLogger({
 class PayOSController {
     constructor() {
         this.payosService = new PayOSService();
-        this.poolPromise = null; // Cache connection pool
+        this.poolPromise = null; 
     }
 
     /**
@@ -37,7 +35,7 @@ class PayOSController {
      */
     async getDbConnection(req) {
         try {
-            // Không cache connection để tránh lỗi connection closed
+            
             if (req && req.app) {
                 const getDbCache = req.app.get('dbConnectionCache');
                 if (getDbCache) {
@@ -45,14 +43,14 @@ class PayOSController {
                 }
             }
 
-            // Luôn lấy kết nối mới thay vì cache
+            
             return await getConnection();
         } catch (error) {
             logger.error('Lỗi khi lấy kết nối database:', error);
 
-            // Thử lại một lần nữa
+            
             try {
-                // Reset pool trước khi lấy lại
+                
                 this.poolPromise = null;
                 return await getConnection();
             } catch (retryError) {
@@ -73,7 +71,7 @@ class PayOSController {
             const { bookingId } = req.params;
             logger.info(`Đang lấy URL thanh toán cho đơn đặt vé: ${bookingId}`);
 
-            // Lấy thông tin người dùng từ token
+            
             const userId = req.user?.User_ID || req.user?.id || req.user?.userId;
 
             if (!userId) {
@@ -85,7 +83,7 @@ class PayOSController {
 
             pool = await this.getDbConnection(req);
 
-            // Truy vấn tối ưu hơn - lấy thông tin booking và user trong một truy vấn
+           
             const optimizedQuery = `
                 SELECT b.*, u.Full_Name 
                 FROM ksf00691_team03.Ticket_Bookings b
@@ -107,7 +105,7 @@ class PayOSController {
             const booking = optimizedResult.recordset[0];
             const customerName = booking.Full_Name;
 
-            // Kiểm tra quyền truy cập: cho phép nếu là chủ sở hữu (User_ID) hoặc người tạo (Created_By)
+            
             if (booking.User_ID !== parseInt(userId) && booking.Created_By !== parseInt(userId)) {
                 return res.status(403).json({
                     success: false,
@@ -115,7 +113,7 @@ class PayOSController {
                 });
             }
 
-            // Kiểm tra trạng thái booking
+            
             if (booking.Status !== 'Pending') {
                 return res.status(400).json({
                     success: false,
@@ -123,17 +121,17 @@ class PayOSController {
                 });
             }
 
-            // Kiểm tra thời gian hết hạn (15 phút)
+            
             const bookingTime = new Date(booking.Booking_Date);
             const expiryTime = new Date(bookingTime.getTime() + 15 * 60 * 1000);
 
             if (new Date() > expiryTime) {
-                // Bắt đầu transaction
+                
                 const transaction = new sql.Transaction(pool);
                 await transaction.begin();
 
                 try {
-                    // Cập nhật trạng thái booking và xóa vé, ghế trong một transaction
+                    
                     const combinedUpdatesQuery = `
                         -- Cập nhật trạng thái booking
                         UPDATE [ksf00691_team03].[Ticket_Bookings] 
@@ -152,12 +150,12 @@ class PayOSController {
                     combinedRequest.input('bookingId', sql.Int, bookingId);
                     await combinedRequest.query(combinedUpdatesQuery);
 
-                    // Commit transaction
+                    
                     await transaction.commit();
 
                     logger.info(`Đơn đặt vé ${bookingId} đã hủy vì hết hạn thanh toán, đã xóa vé và ghế`);
                 } catch (error) {
-                    // Rollback nếu có lỗi
+                    
                     await transaction.rollback();
                     logger.error(`Lỗi khi cập nhật booking hết hạn và xóa dữ liệu: ${error.message}`);
                 }
@@ -168,7 +166,7 @@ class PayOSController {
                 });
             }
 
-            // Tạo link thanh toán (giới hạn 25 kí tự theo yêu cầu của PayOS)
+            
             const paymentResponse = await this.payosService.createPaymentLink(
                 parseInt(bookingId),
                 booking.Total_Amount,
@@ -201,7 +199,7 @@ class PayOSController {
      */
     async handleWebhook(req, res) {
         try {
-            // Trả về phản hồi cho PayOS ngay lập tức để tránh timeout
+            
             res.status(200).json({
                 success: true,
                 message: 'Webhook received successfully'
@@ -211,7 +209,7 @@ class PayOSController {
 
             const webhookData = req.body;
 
-            // Xác thực webhook
+            
             const isValid = await this.payosService.verifyPaymentWebhook(webhookData);
 
             if (!isValid) {
@@ -219,13 +217,13 @@ class PayOSController {
                 return;
             }
 
-            // Xử lý theo trạng thái thanh toán
+            
             const { data } = webhookData;
             const { orderCode, status, amount } = data;
 
             logger.info(`Xử lý webhook cho orderCode: ${orderCode}, status: ${status}`);
 
-            // Xử lý webhook bất đồng bộ để không chặn response
+            
             setImmediate(async () => {
                 try {
                     let result;
@@ -248,7 +246,7 @@ class PayOSController {
             });
         } catch (error) {
             logger.error('Lỗi khi xử lý webhook:', error);
-            // Không trả về lỗi vì đã trả về phản hồi thành công ở trên
+            
         }
     }
 
@@ -268,18 +266,18 @@ class PayOSController {
                 return res.redirect(`${frontendUrl}/payment/error?message=Missing order code`);
             }
 
-            // Lấy booking ID từ orderCode
+            
             const bookingId = Math.floor(parseInt(orderCode) / 1000);
             const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-            // Lấy thông tin thanh toán từ PayOS
+            
             try {
                 const paymentInfo = await this.payosService.getPaymentInfo(parseInt(orderCode));
                 logger.info(`Thông tin thanh toán từ PayOS: ${JSON.stringify(paymentInfo)}`);
 
-                // Xử lý theo trạng thái thanh toán - Thay thế cho webhook trong môi trường local
+                
                 if (paymentInfo.status === 'PAID') {
-                    // Xử lý thanh toán thành công như trong webhook
+                    
                     await this.payosService.handleSuccessfulPayment({
                         orderCode: parseInt(orderCode),
                         amount: paymentInfo.amount,
@@ -290,7 +288,7 @@ class PayOSController {
                     logger.info(`Đã xử lý thành công thanh toán khi người dùng quay lại, orderCode: ${orderCode}`);
                     return res.redirect(`${frontendUrl}/payment/success?bookingId=${bookingId}&orderCode=${orderCode}`);
                 } else if (paymentInfo.status === 'CANCELLED' || paymentInfo.status === 'EXPIRED') {
-                    // Xử lý thanh toán bị hủy/hết hạn như trong webhook
+
                     await this.payosService.handleFailedPayment({
                         orderCode: parseInt(orderCode),
                         status: paymentInfo.status
@@ -299,7 +297,7 @@ class PayOSController {
                     logger.info(`Đã xử lý thanh toán thất bại khi người dùng quay lại, orderCode: ${orderCode}`);
                     return res.redirect(`${frontendUrl}/payment/failed?bookingId=${bookingId}&orderCode=${orderCode}`);
                 } else {
-                    // Trạng thái khác (PENDING) - chuyển hướng tới trang chờ
+                    
                     return res.redirect(`${frontendUrl}/payment/pending?bookingId=${bookingId}&orderCode=${orderCode}`);
                 }
             } catch (error) {
@@ -329,24 +327,24 @@ class PayOSController {
                 return res.redirect(`${frontendUrl}/payment/cancelled`);
             }
 
-            // Lấy booking ID từ orderCode
+            
             const bookingId = Math.floor(orderCode / 1000);
 
-            // Chuyển hướng người dùng ngay lập tức
+            
             res.redirect(`${frontendUrl}/payment/cancelled?bookingId=${bookingId}&orderCode=${orderCode}`);
 
-            // Xử lý hủy bỏ bất đồng bộ để không chặn response
+            
             setImmediate(async () => {
                 try {
-                    // Lấy kết nối database
+                    
                     const pool = await this.getDbConnection();
 
-                    // Bắt đầu transaction
+                    
                     const transaction = new sql.Transaction(pool);
                     await transaction.begin();
 
                     try {
-                        // Cập nhật tất cả trạng thái trong một truy vấn duy nhất
+                        
                         const cancelQuery = `
                             -- Cập nhật trạng thái payment
                             UPDATE [ksf00691_team03].[Payments]
@@ -372,12 +370,12 @@ class PayOSController {
                         request.input('bookingId', sql.Int, bookingId);
                         await request.query(cancelQuery);
 
-                        // Commit transaction
+                        
                         await transaction.commit();
 
                         logger.info(`Đã hủy thành công booking ${bookingId} và xóa vé, ghế`);
                     } catch (error) {
-                        // Rollback nếu có lỗi
+                        
                         await transaction.rollback();
                         logger.error(`Lỗi khi hủy booking và xóa dữ liệu: ${error.message}`);
                     }
@@ -405,7 +403,7 @@ class PayOSController {
 
             const pool = await this.getDbConnection(req);
 
-            // Lấy thông tin từ database
+
             const query = `
                 SELECT p.*, tb.User_ID 
                 FROM ksf00691_team03.Payments p
@@ -425,7 +423,7 @@ class PayOSController {
 
             const payment = result.recordset[0];
 
-            // Kiểm tra quyền truy cập
+           
             const userId = req.user?.User_ID || req.user?.id || req.user?.userId;
             if (payment.User_ID !== parseInt(userId)) {
                 return res.status(403).json({
@@ -469,7 +467,6 @@ class PayOSController {
 
             const pool = await this.getDbConnection(req);
 
-            // Lấy thông tin từ database để kiểm tra quyền truy cập
             const query = `
                 SELECT p.*, tb.User_ID 
                 FROM ksf00691_team03.Payments p

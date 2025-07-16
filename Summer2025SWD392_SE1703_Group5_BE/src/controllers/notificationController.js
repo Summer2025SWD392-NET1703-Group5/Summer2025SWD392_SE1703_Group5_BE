@@ -1,4 +1,4 @@
-// File: src/controllers/notificationController.js
+
 const { testConnection } = require('../config/database');
 const NotificationService = require('../services/notificationService');
 
@@ -13,7 +13,7 @@ class NotificationController {
      */
     async getNotifications(req, res) {
         try {
-            // Lấy userId từ JWT token hoặc session
+                                            
             const userId = req.user?.id || req.userId;
 
             if (!userId) {

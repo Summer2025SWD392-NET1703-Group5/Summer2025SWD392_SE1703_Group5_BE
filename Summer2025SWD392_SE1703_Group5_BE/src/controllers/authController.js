@@ -52,8 +52,7 @@ class AuthController {
                 return res.status(400).json({ message: 'Mật khẩu và xác nhận mật khẩu không khớp' });
             }
 
-            // Trước khi gọi service, chuyển đổi tên trường từ camelCase thành snake_case
-            // để phù hợp với validation middleware
+            
             req.body.Full_Name = FullName;
             req.body.Phone_Number = PhoneNumber;
             req.body.Date_Of_Birth = DateOfBirth;
@@ -91,7 +90,7 @@ class AuthController {
             logger.info(`req.user: ${JSON.stringify(req.user)}`);
             logger.info(`Raw request body: ${JSON.stringify(req.body)}`);
 
-            // FIX: Use the same robust logic as getUserProfile to find the user ID
+            
             let userId = null;
             if (req.user) {
                 if (req.user.id) userId = req.user.id;
@@ -122,7 +121,7 @@ class AuthController {
             if (req.body.DateOfBirth !== undefined) {
                 updateData.Date_Of_Birth = req.body.DateOfBirth;
             }
-            // Handle both Sex and Gender fields, standardizing to Sex in database
+            
             if (req.body.Sex !== undefined) {
                 updateData.Sex = req.body.Sex;
             } else if (req.body.Gender !== undefined) {
@@ -205,7 +204,7 @@ class AuthController {
 
             logger.info(`[authController.changePassword] ✅ User ID: ${userId}`);
 
-            // Extract passwords from multiple possible field names
+            
             const currentPassword = req.body.currentPassword || req.body.OldPassword || req.body.oldPassword;
             const newPassword = req.body.newPassword || req.body.NewPassword;
             const confirmPassword = req.body.confirmPassword || req.body.ConfirmNewPassword || req.body.confirmNewPassword;
@@ -215,7 +214,7 @@ class AuthController {
             logger.info(`[authController.changePassword]   - newPassword provided: ${!!newPassword}`);
             logger.info(`[authController.changePassword]   - confirmPassword provided: ${!!confirmPassword}`);
 
-            // Validation - Current Password
+           
             if (!currentPassword) {
                 logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Missing current password`);
                 const detailedResponse = createDetailedValidationResponse([
@@ -224,7 +223,7 @@ class AuthController {
                 return res.status(400).json(detailedResponse);
             }
 
-            // Validation - New Password
+            
             if (!newPassword) {
                 logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Missing new password`);
                 const detailedResponse = createDetailedValidationResponse([
@@ -233,7 +232,7 @@ class AuthController {
                 return res.status(400).json(detailedResponse);
             }
 
-            // Validation - Confirm Password
+            
             if (!confirmPassword) {
                 logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Missing confirm password`);
                 const detailedResponse = createDetailedValidationResponse([
@@ -242,7 +241,7 @@ class AuthController {
                 return res.status(400).json(detailedResponse);
             }
 
-            // Validation - Password Match
+            
             if (newPassword !== confirmPassword) {
                 logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - Passwords do not match`);
                 logger.warn(`[authController.changePassword]   - New password length: ${newPassword.length}`);
@@ -253,7 +252,7 @@ class AuthController {
                 return res.status(400).json(detailedResponse);
             }
 
-            // Validation - Password Strength
+            
             logger.info(`[authController.changePassword] Kiểm tra độ mạnh mật khẩu mới...`);
             const passwordValidation = checkPasswordStrength(newPassword);
             logger.info(`[authController.changePassword] Password validation result:`);
@@ -275,7 +274,7 @@ class AuthController {
 
             logger.info(`[authController.changePassword] ✅ Password validation passed`);
 
-            // Check if new password is same as current password
+            
             if (currentPassword === newPassword) {
                 logger.warn(`[authController.changePassword] ❌ VALIDATION FAILED - New password same as current`);
                 const detailedResponse = createDetailedValidationResponse([
@@ -307,13 +306,13 @@ class AuthController {
             logger.error(`[authController.changePassword] Error message: ${error.message}`);
             logger.error(`[authController.changePassword] Error stack: ${error.stack}`);
             
-            // Xử lý validation error từ service
+            
             if (error.validationData) {
                 logger.info(`[authController.changePassword] Trả về validation error response từ service`);
                 return res.status(400).json(error.validationData);
             }
             
-            // Xử lý các loại error cụ thể
+            
             if (error.message.includes('Mật khẩu cũ không chính xác') || error.message.includes('Mật khẩu hiện tại không đúng')) {
                 logger.warn(`[authController.changePassword] ❌ Wrong current password`);
                 const detailedResponse = createDetailedValidationResponse([
@@ -368,7 +367,7 @@ class AuthController {
 
     async getUserProfile(req, res) {
         try {
-            // Kiểm tra toàn diện về req.user
+            
             if (!req.user) {
                 logger.error('[authController.getUserProfile] req.user is undefined or null');
                 return res.status(401).json({
@@ -376,7 +375,7 @@ class AuthController {
                 });
             }
 
-            // Tìm userId từ nhiều khả năng khác nhau
+            
             let userId = null;
             if (req.user.id) {
                 userId = req.user.id;
@@ -406,18 +405,18 @@ class AuthController {
 
             logger.info(`[authController.getUserProfile] UserRepository result: Found`);
 
-            // Prepare user profile response
+            
             const userProfile = {
                 User_ID: user.User_ID,
                 Full_Name: user.Full_Name,
                 Email: user.Email,
-                Phone_Number: user.Phone_Number, // ✅ FIX: Đúng tên trường trong DB
+                Phone_Number: user.Phone_Number, 
                 Date_Of_Birth: user.Date_Of_Birth,
-                Sex: user.Sex, // ✅ FIX: Đúng tên trường trong DB (giới tính)
-                Address: user.Address, // ✅ ADD: Thêm địa chỉ
+                Sex: user.Sex, 
+                Address: user.Address, 
                 Role: user.Role,
                 Cinema_ID: user.Cinema_ID,
-                Account_Status: user.Account_Status, // ✅ FIX: Đúng tên trường trong DB
+                Account_Status: user.Account_Status, 
                 Created_At: user.Created_At
             };
 
@@ -575,7 +574,7 @@ class AuthController {
         }
     }
 
-    // Route to show the password reset form
+    
     async showResetPasswordForm(req, res) {
         const { token, newUser } = req.query;
         const isNewUser = newUser === 'true';
@@ -738,7 +737,7 @@ class AuthController {
         }
     }
 
-    // Route to handle the password reset form submission
+    
     async performPasswordReset(req, res) {
         const { token, newPassword, confirmPassword, newUser } = req.body;
         const isNewUser = newUser === 'true';
@@ -750,7 +749,7 @@ class AuthController {
             logger.info(`[authController.performPasswordReset] Password provided: ${!!newPassword}`);
             logger.info(`[authController.performPasswordReset] Confirm password provided: ${!!confirmPassword}`);
 
-            // Validate required fields
+           
             if (!token || !newPassword || !confirmPassword) {
                 logger.warn(`[authController.performPasswordReset] ❌ VALIDATION FAILED - Missing required fields:`);
                 logger.warn(`[authController.performPasswordReset]   - Token: ${!!token}`);
@@ -767,7 +766,7 @@ class AuthController {
                 });
             }
 
-            // Check password match
+            
             if (newPassword !== confirmPassword) {
                 logger.warn(`[authController.performPasswordReset] ❌ VALIDATION FAILED - Passwords do not match`);
                 logger.warn(`[authController.performPasswordReset]   - New password length: ${newPassword.length}`);
@@ -778,7 +777,7 @@ class AuthController {
                 return res.status(400).json(detailedResponse);
             }
 
-            // Validate password strength
+            
             logger.info(`[authController.performPasswordReset] Kiểm tra độ mạnh mật khẩu...`);
             const passwordValidation = checkPasswordStrength(newPassword);
             logger.info(`[authController.performPasswordReset] Password validation result:`);
@@ -800,7 +799,7 @@ class AuthController {
             }
             logger.info(`[authController.performPasswordReset] ✅ Password validation passed`);
 
-            // Check token in cache
+           
             const tokenCacheKey = isNewUser
                 ? `password_setup_token_${token}`
                 : `password_reset_token_${token}`;
@@ -811,7 +810,7 @@ class AuthController {
             logger.info(`[authController.performPasswordReset] Token found in primary cache: ${!!storedData}`);
 
             if (!storedData) {
-                // Try alternate token key for compatibility
+                
                 const alternateTokenCacheKey = isNewUser
                     ? `password_reset_token_${token}`
                     : `password_setup_token_${token}`;
@@ -837,7 +836,7 @@ class AuthController {
             const userId = storedData.userId;
             logger.info(`[authController.performPasswordReset] ✅ Token hợp lệ - User ID: ${userId}`);
 
-            // Find user by ID
+            
             logger.info(`[authController.performPasswordReset] Tìm user với ID: ${userId}`);
             const user = await UserRepository.findById(userId);
             if (!user) {
@@ -854,12 +853,12 @@ class AuthController {
             logger.info(`[authController.performPasswordReset]   - Current Status: ${user.Account_Status}`);
             logger.info(`[authController.performPasswordReset]   - Role: ${user.Role}`);
 
-            // Hash new password
+            
             logger.info(`[authController.performPasswordReset] Băm mật khẩu mới...`);
             const hashedPassword = await bcrypt.hash(newPassword, 10);
             logger.info(`[authController.performPasswordReset] ✅ Mật khẩu đã được băm thành công`);
 
-            // Update user data using UserRepository
+            
             logger.info(`[authController.performPasswordReset] Cập nhật thông tin user...`);
             const updateData = {
                 Password: hashedPassword
@@ -875,11 +874,11 @@ class AuthController {
                 Password: '[HIDDEN]'
             })}`);
 
-            // Sử dụng UserRepository.update thay vì user.update
+            
             const updateResult = await UserRepository.update(userId, updateData);
             logger.info(`[authController.performPasswordReset] ✅ Update result: ${JSON.stringify(updateResult)}`);
 
-            // Clear tokens from cache
+            
             logger.info(`[authController.performPasswordReset] Xóa tokens khỏi cache...`);
             cache.del(tokenCacheKey);
             const alternateTokenCacheKey = isNewUser
@@ -890,7 +889,7 @@ class AuthController {
             logger.info(`[authController.performPasswordReset]   - Primary: ${tokenCacheKey}`);
             logger.info(`[authController.performPasswordReset]   - Alternate: ${alternateTokenCacheKey}`);
 
-            // Create success messages
+            
             const successTitle = isNewUser ? 'Thiết lập mật khẩu thành công!' : 'Đặt lại mật khẩu thành công!';
             const successMessage = isNewUser
                 ? 'Mật khẩu đã được thiết lập và tài khoản đã được kích hoạt'
@@ -927,9 +926,9 @@ class AuthController {
 }
 
 function createHtmlResponse(title, message, description, isSuccess = true, redirectUrl = null, redirectDelay = 3000) {
-    const successColor = '#28a745'; // Green for success
-    const errorColor = '#dc3545';   // Red for error
-    const noticeColor = '#17a2b8';  // Blue for general notice
+    const successColor = '#28a745'; 
+    const errorColor = '#dc3545';   
+    const noticeColor = '#17a2b8';  
 
     let headerColor = isSuccess === true ? successColor : (isSuccess === false ? errorColor : noticeColor);
     let statusMessage = isSuccess === true ? 'Thành công!' : (isSuccess === false ? 'Thất bại!' : 'Thông báo');

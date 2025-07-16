@@ -15,21 +15,21 @@ const bookingService = require('../services/bookingService');
 const PayOSService = require('../services/payosService');
 const logger = require('../utils/logger');
 
-// Hàm hỗ trợ format thời gian (trả về chỉ HH:MM:SS)
+
 const formatTimeOnly = (timeString) => {
     if (!timeString) return null;
 
-    // Nếu có chứa 'T' (định dạng ISO), trích xuất phần giờ
+    
     if (typeof timeString === 'string' && timeString.includes('T')) {
-        return timeString.substring(11, 19); // Lấy HH:mm:ss
+        return timeString.substring(11, 19); 
     }
 
-    // Nếu là đối tượng Date
+    
     if (timeString instanceof Date) {
-        return timeString.toTimeString().substring(0, 8); // Lấy HH:MM:SS
+        return timeString.toTimeString().substring(0, 8); 
     }
 
-    // Nếu đã là định dạng giờ HH:MM:SS
+    
     if (typeof timeString === 'string' && /^\d{2}:\d{2}:\d{2}/.test(timeString)) {
         return timeString;
     }
@@ -37,8 +37,7 @@ const formatTimeOnly = (timeString) => {
     return timeString;
 };
 
-// QUAN TRỌNG: Khởi tạo service instances.
-// BẠN PHẢI THAY THẾ BẰNG KHỞI TẠO SERVICE THỰC SỰ
+
 let payOSService;
 try {
     const PayOSService = require('../services/payosService');
@@ -46,7 +45,7 @@ try {
     logger.info('PayOSService initialized successfully');
 } catch (error) {
     logger.error('Failed to initialize PayOSService:', error);
-    // Fallback service for development
+    
     payOSService = {
         cancelBookingPayment: async (bookingId, userId) => {
             logger.warn(`Using fallback PayOS service for booking ${bookingId}`);
@@ -66,8 +65,8 @@ try {
 
 /**
  * @typedef {object} DebugTestDTO
- * @property {string} testMessage - This is a test message.
- * @property {number} testNumber - This is a test number.
+ * @property {string} testMessage 
+ * @property {number} testNumber 
  */
 
 // --- DTOs (JSDoc from original file) ---
@@ -80,9 +79,9 @@ try {
 
 /**
  * @typedef {object} BookingRequestDTO
- * @property {number} showtimeId - ID của suất chiếu.
- * @property {Array<number>} layoutSeatIds - Danh sách các ID của SeatLayout được chọn.
- * @property {string} paymentMethod - Phương thức thanh toán (ví dụ: "CreditCard", "MoMo", "VNPay").
+ * @property {number} showtimeId 
+ * @property {Array<number>} layoutSeatIds 
+ * @property {string} paymentMethod
  */
 
 /**
@@ -130,10 +129,10 @@ try {
  * @property {string} Seats
  */
 
-// --- Controller Methods ---
+
 
 const GetAllBookings = async (req, res) => {
-    const startTime = Date.now(); // Đo thời gian response
+    const startTime = Date.now();
     logger.info('GetAllBookings called', { service: 'BookingController' });
     
     try {
@@ -144,20 +143,20 @@ const GetAllBookings = async (req, res) => {
             });
         }
 
-        // OPTIMIZATION 1: Thêm pagination support
+        
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const offset = (page - 1) * limit;
 
-        // OPTIMIZATION 2: Gọi service đã được tối ưu hóa  
+          
         const bookings = await bookingService.getAllBookings();
         
-        // OPTIMIZATION 3: Implement pagination ở application layer
+        
         const paginatedBookings = bookings.slice(offset, offset + limit);
         const totalCount = bookings.length;
         const totalPages = Math.ceil(totalCount / limit);
 
-        // OPTIMIZATION 4: Tạo response với metadata
+        
         const responseTime = Date.now() - startTime;
         const responseData = {
             success: true,
@@ -176,7 +175,7 @@ const GetAllBookings = async (req, res) => {
             }
         };
 
-        // OPTIMIZATION 5: Disable cache để luôn lấy dữ liệu mới
+        
         res.set({
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
@@ -206,7 +205,7 @@ const GetAllBookings = async (req, res) => {
 };
 
 const GetMyBookings = async (req, res) => {
-    const startTime = Date.now(); // Đo thời gian response
+    const startTime = Date.now(); 
     logger.info('GetMyBookings called', { service: 'BookingController' });
     
     const userIdFromToken = req.user?.id;
@@ -216,7 +215,7 @@ const GetMyBookings = async (req, res) => {
     }
 
     try {
-        // OPTIMIZATION 1: Validate userId ngay từ đầu
+        
         const userId = parseInt(userIdFromToken, 10);
         if (isNaN(userId) || userId <= 0) {
             return res.status(400).json({ 
@@ -229,10 +228,10 @@ const GetMyBookings = async (req, res) => {
             return res.status(500).json({ message: "BookingService not available" });
         }
 
-        // OPTIMIZATION 2: Gọi service đã được tối ưu hóa
+        
         const bookings = await bookingService.getUserBookings(userId);
         
-        // OPTIMIZATION 3: Thêm metadata để monitor performance
+        
         const responseTime = Date.now() - startTime;
         const responseData = {
             success: true,
@@ -244,14 +243,14 @@ const GetMyBookings = async (req, res) => {
             }
         };
 
-        // OPTIMIZATION 4: Log performance metrics
+        
         logger.info(`GetMyBookings completed for user ${userId}`, {
             bookingsCount: bookings.length,
             responseTime: responseTime,
             service: 'BookingController'
         });
 
-        // OPTIMIZATION 5: Disable cache để luôn lấy dữ liệu mới
+        
         res.set({
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
@@ -271,7 +270,7 @@ const GetMyBookings = async (req, res) => {
             service: 'BookingController'
         });
 
-        // OPTIMIZATION 6: Trả về error response có cấu trúc
+        
         res.status(500).json({ 
             success: false,
             message: "Có lỗi xảy ra khi lấy danh sách đơn đặt vé",
@@ -306,12 +305,12 @@ const CreateBooking = async (req, res) => {
         const bookingDataForService = {
             Showtime_ID: Showtime_ID,
             layoutSeatIds: layoutSeatIds,
-            Payment_Method: Payment_Method || null, // Đặt giá trị mặc định là null nếu không có
+            Payment_Method: Payment_Method || null, 
         };
 
         const result = await bookingService.createBooking(bookingDataForService, userIdFromToken);
 
-        // Format thời gian trước khi trả về response
+       
         if (result && result.booking && result.booking.Start_Time) {
             result.booking.Start_Time = formatTimeOnly(result.booking.Start_Time);
         }
@@ -336,7 +335,7 @@ const CreateBooking = async (req, res) => {
             });
         }
 
-        // Xử lý lỗi ghế đã đặt
+        
         if (error.name === 'SeatUnavailableError') {
             return res.status(error.statusCode || 409).json({
                 success: false,
@@ -377,7 +376,7 @@ const GetBookingById = async (req, res) => {
         if (!booking) {
             return res.status(404).json({ message: "Không tìm thấy đặt vé." });
         }
-        // Kiểm tra quyền: Admin/Staff hoặc chủ sở hữu (User_ID) hoặc người tạo (Created_By)
+        
         if (userRole !== 'Admin' && userRole !== 'Staff' &&
             booking.User_ID !== userIdFromToken && booking.Created_By !== userIdFromToken) {
             logger.warn(`User ${userIdFromToken} (Role: ${userRole}) attempt to access booking ${bookingId} of user ${booking.User_ID}, created by ${booking.Created_By}`);
@@ -442,29 +441,29 @@ const UpdateBookingPayment = async (req, res) => {
     try {
         if (!bookingService) return res.status(500).json({ message: "BookingService không khả dụng" });
 
-        // Gọi service để cập nhật thanh toán
+        
         const result = await bookingService.updateBookingPayment(bookingId, userIdFromToken);
 
-        // Kiểm tra kết quả từ service
+        
         if (!result || !result.success) {
             return res.status(400).json({
                 message: result?.message || "Cập nhật thanh toán không thành công"
             });
         }
 
-        // Kiểm tra xem có booking trong kết quả không
+        
         if (!result.booking) {
             return res.status(500).json({
                 message: "Không có thông tin đơn đặt vé trong kết quả"
             });
         }
 
-        // Kiểm tra Payment_Method trong kết quả
+        
         if (!result.booking.Payment_Method) {
             result.booking.Payment_Method = 'Cash';
         }
 
-        // Trả về kết quả thành công
+        
         res.status(200).json(result);
     } catch (error) {
         logger.error('Error in UpdateBookingPayment', {
@@ -474,7 +473,7 @@ const UpdateBookingPayment = async (req, res) => {
             service: 'BookingController'
         });
 
-        // Xử lý các loại lỗi cụ thể
+        
         if (error.name === 'NotFoundError') {
             return res.status(404).json({ message: error.message || "Không tìm thấy đơn đặt vé" });
         } else if (error.name === 'UnauthorizedError') {
@@ -483,7 +482,7 @@ const UpdateBookingPayment = async (req, res) => {
             return res.status(400).json({ message: error.message || "Thao tác không hợp lệ" });
         }
 
-        // Lỗi hệ thống chung
+       
         res.status(500).json({
             message: "Lỗi khi cập nhật thanh toán cho đơn đặt vé",
             error: error.message
@@ -493,18 +492,18 @@ const UpdateBookingPayment = async (req, res) => {
 
 const CancelBooking = async (req, res) => {
     try {
-        // **FIX**: Sử dụng đúng tên parameter từ route
-        const bookingId = parseInt(req.params.id, 10); // Không phải req.params.bookingId
-        const userId = req.user.userId || req.user.id; // Fallback cho cả 2 trường hợp
+        
+        const bookingId = parseInt(req.params.id, 10); 
+        const userId = req.user.userId || req.user.id; 
 
         logger.info('CancelBooking called', {
             bookingId: bookingId,
             userId,
-            params: req.params, // Debug params
+            params: req.params, 
             service: 'BookingController'
         });
 
-        // Validate input
+       
         if (!bookingId || isNaN(bookingId)) {
             return res.status(400).json({
                 success: false,
@@ -526,7 +525,7 @@ const CancelBooking = async (req, res) => {
             });
         }
 
-        // 1. Kiểm tra quyền truy cập booking
+        
         const booking = await TicketBooking.findOne({
             where: { Booking_ID: bookingId },
             attributes: ['Booking_ID', 'User_ID', 'Created_By', 'Status'],
@@ -551,7 +550,7 @@ const CancelBooking = async (req, res) => {
             createdBy: booking.Created_By
         });
 
-        // Kiểm tra quyền hủy
+       
         if (booking.User_ID !== userId && booking.Created_By !== userId) {
             return res.status(403).json({
                 success: false,
@@ -564,7 +563,7 @@ const CancelBooking = async (req, res) => {
             });
         }
 
-        // Kiểm tra trạng thái booking
+        
         if (booking.Status === 'Cancelled') {
             return res.status(400).json({
                 success: false,
@@ -579,10 +578,10 @@ const CancelBooking = async (req, res) => {
             });
         }
 
-        // 2. Kiểm tra và hủy thanh toán PayOS (nếu có)
+        
         let payOSResult = null;
         try {
-            // Sử dụng đúng service name
+            
             const paymentStatus = await payOSService.getBookingPaymentStatus(bookingId);
             logger.info('Payment status check result:', {
                 found: !!paymentStatus,
@@ -613,36 +612,36 @@ const CancelBooking = async (req, res) => {
                 error: payOSError.message,
                 service: 'BookingController'
             });
-            // Tiếp tục với việc hủy booking ngay cả khi PayOS fail
+            
             payOSResult = {
                 success: false,
                 message: 'Không thể hủy thanh toán PayOS: ' + payOSError.message
             };
         }
 
-        // 3. Hủy booking trong database
+        
         const cancellationResult = await bookingService.processManualCancellation(
             bookingId,
             userId
         );
 
-        // 4. 🔧 FIX: Clear tất cả ghế của user và emit WebSocket event
+        
         try {
             const { getIO } = require('../websocket/socketHandler');
             const seatSelectionService = require('../services/seatSelectionService');
 
-            // Lấy showtime ID từ cancellationResult hoặc từ booking data
+            
             let showtimeId = null;
 
-            // Thử lấy từ cancellationResult trước
+            
             if (cancellationResult && cancellationResult.data && cancellationResult.data.Showtime_ID) {
                 showtimeId = cancellationResult.data.Showtime_ID;
             }
-            // Nếu không có, thử lấy từ booking object
+           
             else if (booking && booking.Showtime_ID) {
                 showtimeId = booking.Showtime_ID;
             }
-            // Cuối cùng, query lại từ database nếu cần
+            
             else {
                 try {
                     const { TicketBooking } = require('../models');
@@ -662,17 +661,17 @@ const CancelBooking = async (req, res) => {
             if (showtimeId) {
                 console.log(`🧹 [CANCEL_BOOKING] Clearing all seats for user ${userId} in showtime ${showtimeId}`);
 
-                // Clear tất cả ghế của user trong Redis
+               
                 const clearResult = await seatSelectionService.clearAllUserSeats(showtimeId, userId);
                 console.log(`🧹 [CANCEL_BOOKING] Clear result:`, clearResult);
 
                 console.log(`🔄 [CANCEL_BOOKING] Broadcasting seat state update for showtime ${showtimeId}`);
 
-                // Lấy trạng thái ghế mới sau khi clear
+                
                 const seats = await seatSelectionService.getShowtimeSeats(showtimeId);
                 const validSeats = Array.isArray(seats) ? seats : [];
 
-                // Broadcast đến tất cả clients trong room
+                
                 const roomName = `showtime-${showtimeId}`;
                 const io = getIO();
                 io.to(roomName).emit('seats-state', validSeats);
@@ -685,7 +684,7 @@ const CancelBooking = async (req, res) => {
             console.error(`❌ [CANCEL_BOOKING] Lỗi khi clear seats và broadcast:`, broadcastError);
         }
 
-        // 5. Trả về kết quả
+        
         return res.status(200).json({
             success: true,
             message: 'Hủy đơn đặt vé thành công',
@@ -891,7 +890,7 @@ const SearchBookings = async (req, res) => {
 const ExportBookings = async (req, res) => {
     logger.info('ExportBookings called', { service: 'BookingController' });
     try {
-        // Simplified query approach, removing potentially problematic options
+        
         const queryOptions = {
             include: [
                 {
@@ -913,17 +912,17 @@ const ExportBookings = async (req, res) => {
         const bookingsFromDb = await TicketBooking.findAll(queryOptions);
         logger.info(`Found ${bookingsFromDb.length} bookings for export`, { service: 'BookingController' });
 
-        // If there are no bookings, return an empty file
+        
         if (!bookingsFromDb || bookingsFromDb.length === 0) {
             logger.info('No bookings found for export', { service: 'BookingController' });
             return res.status(404).json({ message: "Không có dữ liệu để xuất" });
         }
 
-        // Process bookings for export
+        
         let dataToExport = [];
         for (const booking of bookingsFromDb) {
             try {
-                // Get seat information
+                
                 let seatInfo = '';
                 try {
                     const tickets = await Ticket.findAll({
@@ -953,12 +952,12 @@ const ExportBookings = async (req, res) => {
                     seatInfo = 'Seat info unavailable';
                 }
 
-                // Convert dates to locale string to avoid issues
+                
                 const showDate = booking.Showtime?.Show_Date
                     ? new Date(booking.Showtime.Show_Date).toLocaleDateString()
                     : '';
 
-                // Create data row
+                
                 dataToExport.push({
                     Booking_ID: String(booking.Booking_ID || ''),
                     CustomerName: String(booking.User?.Full_Name || ''),
@@ -970,22 +969,22 @@ const ExportBookings = async (req, res) => {
                 });
             } catch (bookingError) {
                 logger.error(`Error processing booking ${booking.Booking_ID} for export:`, bookingError);
-                // Continue with next booking
+                
             }
         }
 
-        // Generate CSV
+        
         if (dataToExport.length === 0) {
             return res.status(404).json({ message: "Không thể xuất dữ liệu do lỗi xử lý" });
         }
 
-        // Create CSV header
+        
         const csvHeader = Object.keys(dataToExport[0]).join(',') + '\r\n';
 
-        // Create CSV rows
+        
         const csvBody = dataToExport.map(row =>
             Object.values(row).map(value => {
-                const valStr = String(value || ''); // Ensure value is a string
+                const valStr = String(value || ''); 
                 if (valStr.includes(',') || valStr.includes('"') || valStr.includes('\n')) {
                     return `"${valStr.replace(/"/g, '""')}"`;
                 }
@@ -993,10 +992,10 @@ const ExportBookings = async (req, res) => {
             }).join(',')
         ).join('\r\n');
 
-        // Combine header and body
+        
         const csvContent = csvHeader + csvBody;
 
-        // Set headers and send response
+        
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', 'attachment; filename="bookings_export.csv"');
         res.status(200).send(csvContent);

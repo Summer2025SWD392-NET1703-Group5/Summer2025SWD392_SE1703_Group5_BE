@@ -1,16 +1,13 @@
-// controllers/bookingStatisticsController.js
+
 const bookingStatisticsService = require('../services/bookingStatisticsService');
 
-/**
- * Lấy thống kê đặt vé và doanh thu để FE tự filter theo ngày
- */
 const getBookingStatistics = async (req, res) => {
     try {
         console.log('[getBookingStatistics] Request params:', req.query);
 
         const { startDate, endDate } = req.query;
 
-        // Validate date format if provided
+        
         let start = null;
         let end = null;
 
@@ -59,9 +56,7 @@ const getBookingStatistics = async (req, res) => {
     }
 };
 
-/**
- * Lấy tất cả dữ liệu thống kê (không filter) để FE tự xử lý
- */
+
 const getAllBookingStatistics = async (req, res) => {
     try {
         console.log('[getAllBookingStatistics] Getting all statistics data');
@@ -84,9 +79,7 @@ const getAllBookingStatistics = async (req, res) => {
     }
 };
 
-/**
- * Lấy thống kê theo phim
- */
+
 const getMovieStatistics = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -132,9 +125,7 @@ const getMovieStatistics = async (req, res) => {
     }
 };
 
-/**
- * Lấy thống kê theo phòng chiếu
- */
+
 const getRoomStatistics = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -180,9 +171,7 @@ const getRoomStatistics = async (req, res) => {
     }
 };
 
-/**
- * Lấy thống kê theo ngày
- */
+
 const getDailyStatistics = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -228,9 +217,7 @@ const getDailyStatistics = async (req, res) => {
     }
 };
 
-/**
- * Lấy thống kê theo phương thức thanh toán
- */
+
 const getPaymentMethodStatistics = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;

@@ -1,21 +1,21 @@
-// controllers/movieController.js
+
 const movieService = require('../services/movieService');
 const cloudinaryService = require('../services/cloudinaryService');
 const referenceService = require('../services/referenceService');
 const { validationResult } = require('express-validator');
 
-// Hàm riêng để cập nhật các danh sách tham chiếu
+
 function updateReferenceLists(movieData) {
-    // Thêm đạo diễn mới vào danh sách nếu chưa tồn tại
+   
     if (movieData.Director) {
-        // Tách các đạo diễn bằng dấu phẩy
+        
         const directorList = movieData.Director.split(',').map(director => director.trim());
         directorList.forEach(director => {
             if (director) referenceService.addToReferenceIfNotExists('directors', director);
         });
     }
 
-    // Thêm diễn viên mới vào danh sách
+    
     if (movieData.Cast) {
         const castList = movieData.Cast.split(',').map(actor => actor.trim());
         castList.forEach(actor => {
@@ -23,34 +23,34 @@ function updateReferenceLists(movieData) {
         });
     }
 
-    // Thêm công ty sản xuất mới
+
     if (movieData.Production_Company) {
-        // Tách các công ty sản xuất bằng dấu phẩy
+        
         const companyList = movieData.Production_Company.split(',').map(company => company.trim());
         companyList.forEach(company => {
             if (company) referenceService.addToReferenceIfNotExists('productionCompanies', company);
         });
     }
 
-    // Thêm ngôn ngữ mới
+   
     if (movieData.Language) {
-        // Tách các ngôn ngữ bằng dấu phẩy
+        
         const languageList = movieData.Language.split(',').map(language => language.trim());
         languageList.forEach(language => {
             if (language) referenceService.addToReferenceIfNotExists('languages', language);
         });
     }
 
-    // Thêm quốc gia mới
+    
     if (movieData.Country) {
-        // Tách các quốc gia bằng dấu phẩy
+        
         const countryList = movieData.Country.split(',').map(country => country.trim());
         countryList.forEach(country => {
             if (country) referenceService.addToReferenceIfNotExists('countries', country);
         });
     }
 
-    // Thêm thể loại mới
+    
     if (movieData.Genre) {
         const genreList = movieData.Genre.split(',').map(genre => genre.trim());
         genreList.forEach(genre => {
@@ -60,7 +60,7 @@ function updateReferenceLists(movieData) {
 }
 
 class MovieController {
-    // Tạo phim mới
+   
     async createMovie(req, res) {
         try {
             const errors = validationResult(req);
@@ -71,27 +71,27 @@ class MovieController {
                 });
             }
 
-            // Lấy user ID từ JWT token
+            
             const userId = req.user.id;
             if (!userId) {
                 return res.status(401).json({ message: 'Người dùng chưa đăng nhập' });
             }
 
-            // Kiểm tra ngày phát hành phải trong tương lai
+            
             if (new Date(req.body.Release_Date) <= new Date()) {
                 return res.status(400).json({
                     message: 'Ngày phát hành phải trong tương lai'
                 });
             }
 
-            // Kiểm tra thời lượng phim phải từ 60 phút trở lên
+            
             if (req.body.Duration < 60) {
                 return res.status(400).json({
                     message: 'Thời lượng phim phải từ 60 phút trở lên'
                 });
             }
 
-            // Xử lý upload poster nếu có file
+            
             let posterUrl = null;
             if (req.file) {
                 try {
@@ -109,7 +109,7 @@ class MovieController {
                 Created_By: userId
             };
 
-            // Tự động thêm giá trị mới vào danh sách tham chiếu
+            
             updateReferenceLists(movieData);
 
             const movie = await movieService.createMovie(movieData);
@@ -126,7 +126,7 @@ class MovieController {
         }
     }
 
-    // Cập nhật phim
+    
     async updateMovie(req, res) {
         try {
             const movieId = req.params.id;
@@ -139,14 +139,14 @@ class MovieController {
                 });
             }
 
-            // Kiểm tra thời lượng phim
+            
             if (req.body.Duration && req.body.Duration < 60) {
                 return res.status(400).json({
                     message: 'Thời lượng phim phải từ 60 phút trở lên'
                 });
             }
 
-            // Xử lý upload poster mới nếu có
+            
             let posterUrl = null;
             if (req.file) {
                 try {
@@ -167,7 +167,7 @@ class MovieController {
                 updateData.Poster_URL = posterUrl;
             }
 
-            // Tự động thêm giá trị mới vào danh sách tham chiếu
+            
             updateReferenceLists(updateData);
 
             const updatedMovie = await movieService.updateMovie(updateData);
@@ -186,7 +186,7 @@ class MovieController {
         }
     }
 
-    // Xóa phim (soft delete)
+    
     async deleteMovie(req, res) {
         try {
             const movieId = req.params.id;
@@ -206,7 +206,7 @@ class MovieController {
         }
     }
 
-    // Lấy tất cả phim
+    
     async getAllMovies(req, res) {
         try {
             const { status, filter } = req.query;
@@ -225,7 +225,7 @@ class MovieController {
         }
     }
 
-    // Lấy phim theo ID
+    
     async getMovieById(req, res) {
         try {
             const movieId = req.params.id;
@@ -246,7 +246,7 @@ class MovieController {
         }
     }
 
-    // Đánh giá phim
+    
     async rateMovie(req, res) {
         try {
             const movieId = req.params.id;
@@ -274,7 +274,7 @@ class MovieController {
         }
     }
 
-    // Lấy phim sắp chiếu
+    
     async getComingSoonMovies(req, res) {
         try {
             const movies = await movieService.getComingSoonMovies();
@@ -287,7 +287,7 @@ class MovieController {
         }
     }
 
-    // Lấy phim đang chiếu
+
     async getNowShowingMovies(req, res) {
         try {
             const movies = await movieService.getNowShowingMovies();
@@ -300,7 +300,7 @@ class MovieController {
         }
     }
 
-    // Lấy phim theo thể loại
+    
     async getMoviesByGenre(req, res) {
         try {
             const { genre } = req.params;
@@ -317,7 +317,7 @@ class MovieController {
         }
     }
 
-    // Lấy danh sách thể loại
+    
     async getMovieGenres(req, res) {
         try {
             const genres = await movieService.getMovieGenres();
@@ -333,12 +333,12 @@ class MovieController {
         }
     }
 
-    // Tìm kiếm phim nâng cao
+    
     async searchMovies(req, res) {
         try {
             const searchParams = req.query;
 
-            // Validate search params nếu cần
+            
             if (searchParams.year && isNaN(Number(searchParams.year))) {
                 return res.status(400).json({
                     success: false,
@@ -359,7 +359,7 @@ class MovieController {
         } catch (error) {
             console.error('Lỗi khi tìm kiếm phim:', error);
 
-            // Phân loại lỗi cụ thể
+            
             if (error.name === 'SequelizeDatabaseError') {
                 return res.status(400).json({
                     success: false,
@@ -386,7 +386,7 @@ class MovieController {
         }
     }
 
-    // Lấy phim tương tự - THÊM METHOD NÀY
+    
     async getSimilarMovies(req, res) {
         try {
             const movieId = req.params.id;
@@ -394,7 +394,7 @@ class MovieController {
 
             const movies = await movieService.getSimilarMovies(movieId, limit);
 
-            // Xử lý trường hợp không có phim tương tự
+            
             if (!movies || movies.length === 0) {
                 return res.status(200).json({
                     message: 'Không tìm thấy phim tương tự',
@@ -411,7 +411,7 @@ class MovieController {
         }
     }
 
-    // Lấy thống kê phim - THÊM METHOD NÀY
+    
     async getMovieStats(req, res) {
         try {
             const stats = await movieService.getMovieStats();
@@ -433,7 +433,7 @@ class MovieController {
         try {
             const { movieId, cinemaId } = req.params;
 
-            // Validate movieId
+            
             if (!movieId || isNaN(parseInt(movieId))) {
                 return res.status(400).json({
                     success: false,
@@ -441,7 +441,7 @@ class MovieController {
                 });
             }
 
-            // Validate cinemaId
+            
             if (!cinemaId || isNaN(parseInt(cinemaId))) {
                 return res.status(400).json({
                     success: false,
@@ -452,7 +452,7 @@ class MovieController {
             const parsedMovieId = parseInt(movieId);
             const parsedCinemaId = parseInt(cinemaId);
 
-            // Kiểm tra phim có tồn tại không
+            
             const { Movie, Showtime, CinemaRoom, Cinema } = require('../models');
             const movie = await Movie.findByPk(parsedMovieId);
             if (!movie) {
@@ -462,7 +462,7 @@ class MovieController {
                 });
             }
 
-            // Kiểm tra rạp phim có tồn tại không
+            
             const cinema = await Cinema.findByPk(parsedCinemaId);
             if (!cinema) {
                 return res.status(404).json({
@@ -476,7 +476,7 @@ class MovieController {
             const { Op } = require('sequelize');
             const today = new Date();
 
-            // Tìm tất cả các suất chiếu cho phim tại rạp cụ thể
+            
             const showtimes = await Showtime.findAll({
                 where: {
                     Movie_ID: parsedMovieId,
@@ -498,17 +498,16 @@ class MovieController {
                 ]
             });
 
-            // Nhóm suất chiếu theo ngày
+            
             const showtimesByDate = {};
 
             showtimes.forEach(showtime => {
-                // Sửa lỗi toISOString - đảm bảo Show_Date là Date object
+                
                 let dateKey;
                 if (showtime.Show_Date instanceof Date) {
                     dateKey = showtime.Show_Date.toISOString().split('T')[0]; // YYYY-MM-DD
                 } else {
-                    // Nếu Show_Date là chuỗi, sử dụng trực tiếp nếu nó đã định dạng đúng
-                    // hoặc chuyển đổi nó thành đối tượng Date
+                    
                     const dateObj = new Date(showtime.Show_Date);
                     dateKey = dateObj.toISOString().split('T')[0];
                 }
@@ -560,7 +559,7 @@ class MovieController {
         try {
             const { movieId } = req.params;
 
-            // Validate movieId
+
             if (!movieId || isNaN(parseInt(movieId))) {
                 return res.status(400).json({
                     success: false,
@@ -602,7 +601,7 @@ class MovieController {
         try {
             const { movieId } = req.params;
 
-            // Validate movieId
+                                        
             if (!movieId || isNaN(parseInt(movieId))) {
                 return res.status(400).json({
                     success: false,

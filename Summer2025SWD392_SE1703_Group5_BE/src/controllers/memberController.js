@@ -1,4 +1,4 @@
-// controllers/memberController.js
+            
 const express = require('express');
 const memberService = require('../services/memberService');
 const bookingService = require('../services/bookingService');
@@ -12,12 +12,12 @@ const checkMemberAccess = (req, targetUserId) => {
     const currentUserId = req.user?.id || req.user?.userId;
     const currentUserRole = req.user?.role;
 
-    // Admin và Staff có thể truy cập tất cả
+    
     if (currentUserRole === 'Admin' || currentUserRole === 'Staff') {
         return { hasAccess: true, reason: 'Quyền truy cập Admin/Staff' };
     }
 
-    // User chỉ có thể truy cập thông tin của chính mình
+    
     if (currentUserId && parseInt(currentUserId) === parseInt(targetUserId)) {
         return { hasAccess: true, reason: 'Tự truy cập thông tin cá nhân' };
     }
@@ -41,7 +41,7 @@ const lookupByPhone = async (req, res) => {
             return res.status(404).json({ message: 'Không tìm thấy thành viên với số điện thoại này' });
         }
 
-        // Lấy thông tin điểm thưởng của thành viên
+
         const currentPoints = await memberService.getCurrentPointsAsync(member.User_ID);
 
         const result = {
@@ -75,7 +75,7 @@ const lookupByEmail = async (req, res) => {
             return res.status(404).json({ message: 'Không tìm thấy thành viên với email này' });
         }
 
-        // Lấy thông tin điểm thưởng của thành viên
+        
         const currentPoints = await memberService.getCurrentPointsAsync(member.User_ID);
 
         const result = {
@@ -115,7 +115,7 @@ const linkMember = async (req, res) => {
     } catch (error) {
         logger.error(`Lỗi trong linkMember: ${error.message}`);
 
-        // Handle specific error types
+
         if (error.message.includes('Không tìm thấy')) {
             return res.status(404).json({ message: error.message });
         } else if (error.message.includes('đã được liên kết')) {

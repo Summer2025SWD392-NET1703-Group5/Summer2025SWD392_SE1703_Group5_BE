@@ -1,4 +1,3 @@
-// File: controllers/cinemaRoomController.js
 const cinemaRoomService = require('../services/cinemaRoomService');
 
 exports.getAllCinemaRooms = async (req, res) => {
@@ -39,7 +38,7 @@ exports.createCinemaRoom = async (req, res) => {
     try {
         const model = req.body;
 
-        // Validate required fields
+        
         if (!model || !model.RoomName) {
             return res.status(400).json({ message: 'Room name is required' });
         }
@@ -48,22 +47,22 @@ exports.createCinemaRoom = async (req, res) => {
             return res.status(400).json({ message: 'Valid capacity is required' });
         }
 
-        // Kiểm tra user là Manager và tự động thêm Cinema_ID
+        
         if (req.user) {
             console.log(`[createCinemaRoom] User data from token:`, JSON.stringify(req.user));
 
-            // Kiểm tra cả hai trường hợp: req.user.role và req.user.Role
+            
             const userRole = req.user.role || req.user.Role;
             const userId = req.user.id || req.user.userId || req.user.User_ID;
 
             console.log(`[createCinemaRoom] Detected role: ${userRole}, User ID: ${userId}`);
 
-            // Nếu user là Manager, lấy cinema ID từ thông tin user
+            
             if (userRole === 'Manager') {
                 console.log(`[createCinemaRoom] Manager ${userId} đang tạo phòng chiếu, tự động lấy Cinema_ID từ tài khoản`);
 
                 try {
-                    // Kiểm tra thông tin Manager trực tiếp từ database
+                    
                     const { User } = require('../models');
                     const manager = await User.findByPk(userId);
 
@@ -88,7 +87,7 @@ exports.createCinemaRoom = async (req, res) => {
                         });
                     }
 
-                    // Thêm Cinema_ID vào model
+                   
                     model.Cinema_ID = manager.Cinema_ID;
                     console.log(`[createCinemaRoom] Tự động thêm Cinema_ID: ${manager.Cinema_ID} vào model`);
                 } catch (error) {
@@ -106,7 +105,7 @@ exports.createCinemaRoom = async (req, res) => {
     } catch (err) {
         console.error(`[createCinemaRoom] Error:`, err);
         if (err instanceof Error && err.message) {
-            // Check if the error message contains a suggested room name
+            
             if (err.message.includes('đã tồn tại trong rạp này. Bạn có thể sử dụng tên')) {
                 return res.status(400).json({
                     message: err.message,
@@ -129,7 +128,7 @@ exports.updateCinemaRoom = async (req, res) => {
         res.json(room);
     } catch (err) {
         if (err instanceof Error && err.message) {
-            // Check if the error message contains a suggested room name
+            
             if (err.message.includes('đã tồn tại trong rạp này. Bạn có thể sử dụng tên')) {
                 return res.status(400).json({
                     message: err.message,

@@ -1,8 +1,8 @@
-// controllers/bookingExpirationController.js
+
 const bookingExpirationService = require('../services/bookingExpirationService');
 
 class BookingExpirationController {
-    // Kiểm tra booking quá hạn thủ công
+   
     async checkExpiredBookings(req, res) {
         try {
             const result = await bookingExpirationService.checkExpiredBookings();
@@ -21,7 +21,7 @@ class BookingExpirationController {
         }
     }
 
-    // Force check một booking cụ thể
+    
     async forceCheckBooking(req, res) {
         try {
             const bookingId = parseInt(req.params.bookingId);
@@ -58,7 +58,7 @@ class BookingExpirationController {
         }
     }
 
-    // Lấy thống kê booking quá hạn
+    
     async getExpirationStats(req, res) {
         try {
             const { startDate, endDate } = req.query;
@@ -100,7 +100,7 @@ class BookingExpirationController {
         }
     }
 
-    // Lấy booking sắp hết hạn
+    
     async getBookingsNearExpiration(req, res) {
         try {
             const minutesBefore = parseInt(req.query.minutes) || 30;
@@ -141,7 +141,7 @@ class BookingExpirationController {
         }
     }
 
-    // Lấy trạng thái service
+    
     async getServiceStatus(req, res) {
         try {
             res.json({
@@ -164,7 +164,7 @@ class BookingExpirationController {
         }
     }
 
-    // Khởi động service (chỉ dành cho admin)
+    
     async startService(req, res) {
         try {
             bookingExpirationService.start();
@@ -183,7 +183,7 @@ class BookingExpirationController {
         }
     }
 
-    // Dừng service (chỉ dành cho admin)
+    
     async stopService(req, res) {
         try {
             bookingExpirationService.stop();
