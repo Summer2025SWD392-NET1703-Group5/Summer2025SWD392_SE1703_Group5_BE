@@ -183,7 +183,7 @@ class CinemaController {
     }
 
     /**
-     * Xóa rạp phim
+     * Xóa mềm rạp phim
      * @param {Request} req - Express request object
      * @param {Response} res - Express response object
      */
@@ -199,14 +199,22 @@ class CinemaController {
                 });
             }
 
-            logger.info(`CinemaController.deleteCinema called for ID: ${cinemaId}`);
+            logger.info(`CinemaController.deleteCinema (soft delete) called for ID: ${cinemaId}`);
             const result = await cinemaService.deleteCinema(cinemaId);
             res.status(200).json(result);
         } catch (error) {
             logger.error(`Lỗi trong CinemaController.deleteCinema:`, error);
 
-            if (error.message === 'Không tìm thấy rạp phim') {
+            if (error.message === 'Không tìm thấy rạp phim' || error.message === 'Rạp phim đã được xóa') {
                 return res.status(404).json({
+                    success: false,
+                    message: error.message
+                });
+            }
+
+            // Xử lý lỗi liên quan đến manager/staff
+            if (error.message.includes('nhân viên đang được phân công')) {
+                return res.status(400).json({
                     success: false,
                     message: error.message
                 });
@@ -316,81 +324,49 @@ class CinemaController {
         try {
             // Xác định Cinema ID
             let parsedCinemaId;
+            const userRole = req.user.role || req.user.Role;
+            const userId = req.user.id || req.user.userId || req.user.User_ID;
 
-            if (req.user.role === 'Manager') {
-                // Nếu là Manager, lấy Cinema ID từ thông tin user
+            logger.info(`[createCinemaRoom] Detected role: ${userRole}, User ID: ${userId}`);
+
+            if (userRole === 'Manager') {
+                // Nếu là Manager, lấy Cinema ID từ thông tin user (bỏ qua cinemaId trong URL)
                 const { User } = require('../models');
-                const manager = await User.findByPk(req.user.id);
+                const manager = await User.findByPk(userId);
 
                 if (!manager || !manager.Cinema_ID) {
+                    logger.warn(`[createCinemaRoom] Manager ${userId} chưa được phân công rạp phim`);
                     return res.status(403).json({
                         success: false,
                         message: 'Bạn chưa được phân công quản lý rạp phim nào'
                     });
                 }
 
-                parsedCinemaId = manager.Cinema_ID;
-            } else {
-                // Nếu là Admin/Staff, lấy cinema ID từ parameters
-                const { cinemaId } = req.params;
-                // Kiểm tra cả hai trường hợp: req.user.role và req.user.Role
-                const userRole = req.user.role || req.user.Role;
-                const userId = req.user.id || req.user.userId || req.user.User_ID;
-
-                logger.info(`Detected role: ${userRole}, User ID: ${userId}`);
-
-                // Nếu user là Manager, lấy cinema ID từ thông tin user
-                if (userRole === 'Manager') {
-                    logger.info(`Manager ${userId} đang tạo phòng chiếu, tự động lấy Cinema_ID từ tài khoản`);
-
-                    try {
-                        // Kiểm tra thông tin Manager trực tiếp từ database
-                        const manager = await User.findByPk(userId);
-
-                        if (!manager) {
-                            logger.error(`Không tìm thấy Manager với ID: ${userId}`);
-                            return res.status(404).json({
-                                success: false,
-                                message: 'Không tìm thấy thông tin Manager'
-                            });
-                        }
-
-                        logger.info(`Thông tin Manager: ${JSON.stringify({
-                            id: manager.User_ID,
-                            email: manager.Email,
-                            role: manager.Role,
-                            cinemaId: manager.Cinema_ID
-                        })}`);
-
-                        if (!manager.Cinema_ID) {
-                            logger.error(`Manager ${userId} chưa được phân công rạp phim`);
-                            return res.status(403).json({
-                                success: false,
-                                message: 'Bạn chưa được phân công quản lý rạp phim nào'
-                            });
-                        }
-
-                        parsedCinemaId = manager.Cinema_ID;
-                        logger.info(`Tự động xác định Manager quản lý rạp phim có ID: ${parsedCinemaId}`);
-                    } catch (error) {
-                        logger.error(`Lỗi khi truy vấn thông tin Manager:`, error);
-                        return res.status(500).json({
-                            success: false,
-                            message: 'Đã xảy ra lỗi khi xác thực thông tin Manager'
-                        });
-                    }
-                } else {
-                    // Nếu là Admin/Staff, lấy cinema ID từ parameters
-                    const { cinemaId } = req.params;
-                    parsedCinemaId = parseInt(cinemaId, 10);
-
-                    if (isNaN(parsedCinemaId) || parsedCinemaId <= 0) {
-                        return res.status(400).json({
-                            success: false,
-                            message: 'ID rạp phim không hợp lệ'
-                        });
-                    }
+                // Kiểm tra nếu Manager cố tạo phòng cho rạp khác (qua URL parameter)
+                const requestedCinemaId = parseInt(req.params.cinemaId, 10);
+                if (!isNaN(requestedCinemaId) && requestedCinemaId !== manager.Cinema_ID) {
+                    logger.warn(`[createCinemaRoom] Manager ${userId} cố tạo phòng cho rạp ${requestedCinemaId} nhưng chỉ quản lý rạp ${manager.Cinema_ID}`);
+                    return res.status(403).json({
+                        success: false,
+                        message: `Bạn chỉ có thể tạo phòng chiếu cho rạp mà bạn quản lý (ID: ${manager.Cinema_ID})`
+                    });
                 }
+
+                parsedCinemaId = manager.Cinema_ID;
+                logger.info(`[createCinemaRoom] Manager ${userId} tạo phòng cho rạp ID: ${parsedCinemaId}`);
+            } else {
+                // Nếu là Admin, lấy cinema ID từ URL parameters
+                parsedCinemaId = parseInt(req.params.cinemaId, 10);
+
+                if (isNaN(parsedCinemaId) || parsedCinemaId <= 0) {
+                    logger.error(`[createCinemaRoom] ID rạp phim không hợp lệ: ${req.params.cinemaId}`);
+                    return res.status(400).json({
+                        success: false,
+                        message: 'ID rạp phim không hợp lệ'
+                    });
+                }
+
+                logger.info(`[createCinemaRoom] Admin ${userId} tạo phòng cho rạp ID: ${parsedCinemaId}`);
             }
 
             logger.info(`CinemaController.createCinemaRoom called for cinema ID: ${parsedCinemaId} with body:`, req.body);

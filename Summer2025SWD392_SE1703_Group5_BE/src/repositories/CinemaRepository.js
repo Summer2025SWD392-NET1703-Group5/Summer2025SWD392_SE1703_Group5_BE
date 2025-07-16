@@ -84,7 +84,7 @@ class CinemaRepository {
     }
 
     /**
-     * Lấy tất cả các rạp phim.
+     * Lấy tất cả các rạp phim (Active, Inactive - không bao gồm rạp đã xóa mềm).
      * @returns {Promise<Cinema[]>} Mảng các đối tượng Cinema.
      */
     static async getAll() {
@@ -92,10 +92,11 @@ class CinemaRepository {
             const pool = await getConnection();
             const result = await pool.request().query(`
                 SELECT * FROM Cinemas
-                WHERE Status = 'Active'
+                WHERE Status != 'Deleted'
                 ORDER BY Cinema_Name
             `);
 
+            console.log(`[CinemaRepository.js] getAll: Lấy được ${result.recordset.length} rạp phim (bao gồm Active, Inactive - không bao gồm rạp đã xóa)`);
             return result.recordset;
         } catch (error) {
             console.error('Error in getAll:', error);
@@ -123,24 +124,26 @@ class CinemaRepository {
     }
 
     /**
-     * Xóa rạp phim theo ID.
-     * @param {number} cinemaId - ID của rạp phim cần xóa.
-     * @returns {Promise<boolean>} True nếu xóa thành công, false nếu không.
+     * Xóa mềm rạp phim theo ID (cập nhật Status thành 'Deleted').
+     * @param {number} cinemaId - ID của rạp phim cần xóa mềm.
+     * @returns {Promise<boolean>} True nếu xóa mềm thành công, false nếu không.
      */
     static async remove(cinemaId) {
         try {
             const pool = await getConnection();
-            // Trước khi xóa, kiểm tra xem rạp có phòng chiếu nào không
+            // Thực hiện xóa mềm bằng cách cập nhật Status thành 'Deleted'
             const result = await pool.request()
                 .input('Cinema_ID', sql.Int, cinemaId)
-                .query(`DELETE FROM ${fullCinemaTableName} WHERE Cinema_ID = @Cinema_ID`);
+                .query(`
+                    UPDATE ${fullCinemaTableName}
+                    SET Status = 'Deleted', Updated_At = GETDATE()
+                    WHERE Cinema_ID = @Cinema_ID AND Status != 'Deleted'
+                `);
+
+            console.log(`[CinemaRepository.js] Xóa mềm rạp ID ${cinemaId}: ${result.rowsAffected[0]} rows affected`);
             return result.rowsAffected[0] > 0;
         } catch (error) {
-            console.error(`[CinemaRepository.js] Lỗi trong hàm remove cho ID ${cinemaId}: ${error.message}`);
-            // Bắt lỗi ràng buộc khóa ngoại nếu rạp không thể xóa
-            if (error.message.includes('The DELETE statement conflicted with the REFERENCE constraint')) {
-                console.error(`[CinemaRepository.js] Không thể xóa rạp phim ID ${cinemaId} do có dữ liệu liên quan (ví dụ: phòng chiếu).`);
-            }
+            console.error(`[CinemaRepository.js] Lỗi trong hàm remove (xóa mềm) cho ID ${cinemaId}: ${error.message}`);
             throw error;
         }
     }
@@ -280,10 +283,10 @@ class CinemaRepository {
         try {
             const pool = await getConnection();
 
-            // Lấy tất cả rạp phim
+            // Lấy tất cả rạp phim (Active, Inactive - không bao gồm rạp đã xóa mềm)
             const cinemasResult = await pool.request().query(`
                 SELECT * FROM Cinemas
-                WHERE Status = 'Active'
+                WHERE Status != 'Deleted'
                 ORDER BY Cinema_Name
             `);
 
@@ -498,7 +501,7 @@ class CinemaRepository {
                 JOIN Showtimes s ON cr.Cinema_Room_ID = s.Cinema_Room_ID
                 JOIN Movies m ON s.Movie_ID = m.Movie_ID
                 WHERE s.Status = 'Active'
-                AND c.Status = 'Active'
+                AND c.Status != 'Deleted'
                 AND m.Status = 'Active'
                 AND s.Show_Date >= CAST(GETDATE() AS DATE)
                 ORDER BY c.Cinema_Name

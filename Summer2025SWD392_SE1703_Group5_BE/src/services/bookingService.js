@@ -462,14 +462,65 @@ class BookingService {
       }
 
       // Bước 3: Lấy thông tin ghế được chọn
-      // Thêm showtime_id vào mỗi layout để sử dụng khi tính giá
-      const enhancedSelectedSeats = normalizedBookingData.selectedSeats.map(seatId => {
-        return {
-          layout_id: seatId,
-          showtime_id: normalizedBookingData.showtimeId,
-          Showtime_ID: normalizedBookingData.showtimeId // Thêm cả dạng PascalCase
-        };
-      });
+      // Xử lý cả layoutSeatIds (số) và selectedSeats (string)
+      let seatsToProcess = normalizedBookingData.selectedSeats;
+
+      // Nếu có layoutSeatIds, ưu tiên sử dụng (đây là Layout_ID)
+      if (bookingData.layoutSeatIds && Array.isArray(bookingData.layoutSeatIds)) {
+        seatsToProcess = bookingData.layoutSeatIds;
+        logger.info(`🎯 Sử dụng layoutSeatIds: ${JSON.stringify(seatsToProcess)}`);
+      } else {
+        logger.info(`🎯 Sử dụng selectedSeats: ${JSON.stringify(seatsToProcess)}`);
+      }
+
+      // Chuyển đổi seatId thành Layout_ID nếu cần
+      const enhancedSelectedSeats = await Promise.all(
+        seatsToProcess.map(async (seatId) => {
+          let layoutId;
+
+          // Nếu seatId là số, coi như đã là Layout_ID
+          if (typeof seatId === 'number') {
+            layoutId = seatId;
+            logger.info(`✅ Layout_ID trực tiếp: ${layoutId}`);
+          }
+          // Nếu seatId là string số, parse thành số
+          else if (typeof seatId === 'string' && /^\d+$/.test(seatId)) {
+            layoutId = parseInt(seatId);
+            logger.info(`🔢 Parse string số "${seatId}" thành Layout_ID: ${layoutId}`);
+          }
+          // Nếu seatId là string như "C9", chuyển đổi thành Layout_ID
+          else if (typeof seatId === 'string' && /^[A-Z]\d+$/.test(seatId)) {
+            const rowLabel = seatId.charAt(0);
+            const columnNumber = parseInt(seatId.substring(1));
+
+            // Tìm Layout_ID từ Row_Label và Column_Number
+            const seatLayout = await SeatLayout.findOne({
+              where: {
+                Row_Label: rowLabel,
+                Column_Number: columnNumber,
+                Is_Active: true
+              },
+              transaction
+            });
+
+            if (!seatLayout) {
+              throw new Error(`Không tìm thấy ghế ${seatId} trong hệ thống`);
+            }
+
+            layoutId = seatLayout.Layout_ID;
+            logger.info(`🔄 Chuyển đổi seatId "${seatId}" thành Layout_ID: ${layoutId}`);
+          }
+          else {
+            throw new Error(`Định dạng seatId không hợp lệ: ${seatId}`);
+          }
+
+          return {
+            layout_id: layoutId,
+            showtime_id: normalizedBookingData.showtimeId,
+            Showtime_ID: normalizedBookingData.showtimeId // Thêm cả dạng PascalCase
+          };
+        })
+      );
       
       const seatsWithLayouts = await this.createOrUpdateSeats(
         enhancedSelectedSeats,
@@ -972,58 +1023,31 @@ class BookingService {
         throw new Error('Một số ghế được chọn không hợp lệ hoặc không còn hoạt động');
       }
 
-      // Bước 2: Lấy thông tin các ghế với error handling tốt hơn
-      let seats;
-      try {
-        seats = await Seat.findAll({
-          where: {
-            Layout_ID: { [Op.in]: actualLayoutIds }
-          },
-          transaction,
-          logging: (sql) => logger.info(`SQL Query for Seats: ${sql}`)
-        });
-      } catch (seatQueryError) {
-        logger.error(`Lỗi khi query Seat table: ${seatQueryError.message}`);
-        logger.error(`SQL Error Stack: ${seatQueryError.stack}`);
+      // Bước 2: Bỏ qua việc query existing seats vì luôn tạo mới
+      let seats = []; // Khởi tạo mảng rỗng vì sẽ tạo seats mới
 
-        // Thử query trực tiếp để debug
-        try {
-          const rawSeats = await sequelize.query(`
-            SELECT * FROM [ksf00691_team03].[Seats]
-            WHERE Layout_ID IN (${actualLayoutIds.join(',')})
-          `, {
-            type: sequelize.QueryTypes.SELECT,
-            transaction
-          });
-          logger.info(`Raw query thành công, tìm thấy ${rawSeats.length} ghế`);
-          seats = rawSeats;
-        } catch (rawQueryError) {
-          logger.error(`Raw query cũng thất bại: ${rawQueryError.message}`);
-          throw new Error(`Không thể truy vấn bảng Seats: ${seatQueryError.message}`);
-        }
-      }
-
-      logger.info(`Tìm thấy ${seats.length} ghế cho các layout ID đã chọn`);
-
-      // Bước 3: Tạo ghế mới nếu chưa tồn tại
+      // Bước 3: Luôn tạo Seat record mới cho mỗi booking (theo logic của bạn)
       const seatsToCreate = [];
       for (const layout of seatLayouts) {
-        const existingSeat = seats.find(seat => seat.Layout_ID === layout.Layout_ID);
-        if (!existingSeat) {
-          // Tạo một ghế mới nếu chưa tồn tại
-          seatsToCreate.push({
-            Layout_ID: layout.Layout_ID,
-            Seat_Number: `${layout.Row_Label}${layout.Column_Number}`,
-            Is_Active: true
-          });
-        }
+        // Luôn tạo Seat mới cho mỗi booking, không check existing
+        seatsToCreate.push({
+          Layout_ID: layout.Layout_ID,
+          Seat_Number: `${layout.Row_Label}${layout.Column_Number}`,
+          Is_Active: true
+        });
       }
 
-      if (seatsToCreate.length > 0) {
-        logger.info(`Đang tạo ${seatsToCreate.length} ghế mới cho các layout chưa có ghế`);
+      logger.info(`Đang tạo ${seatsToCreate.length} ghế mới cho booking này`);
+      logger.info(`Dữ liệu ghế sẽ tạo: ${JSON.stringify(seatsToCreate)}`);
+
+      try {
         const newSeats = await Seat.bulkCreate(seatsToCreate, { transaction });
-        seats = [...seats, ...newSeats];
-        logger.info(`Đã tạo thành công ${newSeats.length} ghế mới`);
+        seats = newSeats; // Chỉ sử dụng seats mới tạo
+        logger.info(`Đã tạo thành công ${newSeats.length} ghế mới cho booking`);
+      } catch (createError) {
+        logger.error(`Lỗi khi tạo ghế mới: ${createError.message}`);
+        logger.error(`SQL Error Details:`, createError);
+        throw createError;
       }
 
       if (seats.length === 0) {
@@ -1848,6 +1872,22 @@ class BookingService {
         logger.info(`Đã xóa ${tickets.length} vé của đơn đặt vé ${bookingId}`);
       }
 
+      // Bước 5.5: Xóa ghế vì mỗi booking tạo Seat riêng
+      if (seatIds.length > 0) {
+        try {
+          const deletedSeatsCount = await Seat.destroy({
+            where: {
+              Seat_ID: { [Op.in]: seatIds }
+            },
+            transaction
+          });
+          logger.info(`Đã xóa ${deletedSeatsCount} ghế của đơn đặt vé ${bookingId}`);
+        } catch (error) {
+          logger.error(`Lỗi khi xóa ghế cho booking ${bookingId}: ${error.message}`);
+          // Không throw error để không làm fail toàn bộ cancellation
+        }
+      }
+
       // Bước 6: Tạo lịch sử đơn đặt vé
       await BookingHistory.create({
         Booking_ID: bookingId,
@@ -2304,16 +2344,21 @@ class BookingService {
         logger.info(`Deleted ${deletedTicketsCount} tickets for booking ${bookingId}`);
       }
 
-      // Bước 7: KHÔNG XÓA GHẾ - chỉ cập nhật trạng thái để tái sử dụng
-      // Ghế sẽ được tái sử dụng cho booking khác, không cần xóa
+      // Bước 7: XÓA GHẾ vì mỗi booking tạo Seat riêng
       let deletedSeatsCount = 0;
       if (seatIds.length > 0) {
         try {
-          // Thay vì xóa ghế, chỉ log thông tin để theo dõi
-          logger.info(`Giải phóng ${seatIds.length} ghế cho booking ${bookingId} (ghế sẽ được tái sử dụng)`);
-          deletedSeatsCount = seatIds.length; // Đặt số lượng để báo cáo
+          // Xóa ghế vì không tái sử dụng
+          deletedSeatsCount = await Seat.destroy({
+            where: {
+              Seat_ID: { [Op.in]: seatIds }
+            },
+            transaction
+          });
+          logger.info(`Đã xóa ${deletedSeatsCount} ghế cho booking ${bookingId}`);
         } catch (error) {
-          logger.error(`Lỗi khi xử lý ghế cho booking ${bookingId}: ${error.message}`);
+          logger.error(`Lỗi khi xóa ghế cho booking ${bookingId}: ${error.message}`);
+          // Không throw error để không làm fail toàn bộ cancellation
         }
       }
 

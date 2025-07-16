@@ -420,6 +420,11 @@ class SeatSelectionService {
                     console.error(`❌ [BACKEND] Lỗi khi tính giá vé cho ghế ${seatId}:`, error.message);
                 }
                 
+                // Debug log để kiểm tra Layout_ID
+                if (seatId === 'C9') {
+                    console.log(`🔍 [DEBUG] Ghế C9 - Layout_ID: ${layout.Layout_ID}, Row: ${rowLabel}, Column: ${columnNumber}`);
+                }
+
                 // Thêm ghế vào danh sách kết quả
                 allSeats.push({
                     seatId,

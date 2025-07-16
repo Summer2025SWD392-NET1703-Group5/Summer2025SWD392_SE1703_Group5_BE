@@ -138,8 +138,8 @@ class SeatLayoutService {
                 throw new Error(`Không tìm thấy phòng chiếu có ID ${roomId}`);
             }
 
-            // Kiểm tra sức chứa tối đa của phòng
-            const maxCapacity = cinemaRoom.Max_Capacity || 150; // Nếu không có cấu hình sức chứa tối đa, lấy giá trị mặc định là 150
+            // Lấy số ghế tối đa của phòng từ Seat_Quantity
+            const roomSeatCapacity = cinemaRoom.Seat_Quantity;
 
             // Tính tổng số ghế hiện có của phòng (không tính những ghế đang cấu hình lại)
             const currentActiveSeats = await SeatLayout.count({
@@ -151,7 +151,7 @@ class SeatLayoutService {
                 transaction
             });
 
-            // Tính tổng số ghế
+            // Tính tổng số ghế trong layout mới
             let totalSeats = 0;
             for (const row of model.Rows) {
                 totalSeats += model.ColumnsPerRow - (row.EmptyColumns?.length || 0);
@@ -159,8 +159,8 @@ class SeatLayoutService {
 
             // Kiểm tra tổng số ghế sau khi cộng thêm ghế mới
             const totalSeatsAfterAddition = currentActiveSeats + totalSeats;
-            if (totalSeatsAfterAddition > maxCapacity) {
-                throw new Error(`Không thể thêm ${totalSeats} ghế mới. Phòng chỉ có thể chứa tối đa ${maxCapacity} ghế, hiện đã có ${currentActiveSeats} ghế. Vui lòng giảm số lượng ghế.`);
+            if (totalSeatsAfterAddition > roomSeatCapacity) {
+                throw new Error(`Không thể tạo ${totalSeats} ghế mới. Tổng số ghế sau khi thêm (${totalSeatsAfterAddition}) vượt quá sức chứa của phòng (${roomSeatCapacity} ghế). Hiện đã có ${currentActiveSeats} ghế. Vui lòng giảm số lượng ghế.`);
             }
 
             if (totalSeats < 20 || totalSeats > 150) {
@@ -280,8 +280,8 @@ class SeatLayoutService {
                 };
             }
 
-            // Kiểm tra sức chứa tối đa của phòng
-            const maxCapacity = cinemaRoom.Max_Capacity || 50; // Nếu không có cấu hình sức chứa tối đa, lấy giá trị mặc định là 50
+            // Lấy số ghế tối đa của phòng từ Seat_Quantity
+            const roomSeatCapacity = cinemaRoom.Seat_Quantity;
 
             // Tính tổng số ghế hiện có của phòng (không tính những ghế đang cấu hình lại)
             const parsedRows = this.parseRowsInput(model.RowsInput);
@@ -301,18 +301,19 @@ class SeatLayoutService {
 
             // Kiểm tra tổng số ghế sau khi cộng thêm ghế mới
             const totalSeatsAfterAddition = currentActiveSeats + totalNewSeats;
-            if (totalSeatsAfterAddition > maxCapacity) {
+            if (totalSeatsAfterAddition > roomSeatCapacity) {
                 return {
                     success: false,
-                    message: `Không thể thêm ${totalNewSeats} ghế mới. Phòng chỉ có thể chứa tối đa ${maxCapacity} ghế, hiện đã có ${currentActiveSeats} ghế. Vui lòng giảm số lượng ghế.`,
-                    error_code: 'EXCEEDED_MAX_CAPACITY',
+                    message: `Không thể tạo ${totalNewSeats} ghế mới. Tổng số ghế sau khi thêm (${totalSeatsAfterAddition}) vượt quá sức chứa của phòng (${roomSeatCapacity} ghế). Hiện đã có ${currentActiveSeats} ghế. Vui lòng giảm số lượng ghế.`,
+                    error_code: 'EXCEEDED_ROOM_CAPACITY',
                     details: {
                         current_seats: currentActiveSeats,
                         new_seats: totalNewSeats,
-                        max_capacity: maxCapacity,
-                        exceeded_by: totalSeatsAfterAddition - maxCapacity
+                        room_capacity: roomSeatCapacity,
+                        total_after_addition: totalSeatsAfterAddition,
+                        exceeded_by: totalSeatsAfterAddition - roomSeatCapacity
                     },
-                    suggestion: 'Vui lòng giảm số lượng hàng hoặc cột để đảm bảo tổng số ghế không vượt quá sức chứa'
+                    suggestion: 'Vui lòng giảm số lượng hàng hoặc cột để đảm bảo tổng số ghế không vượt quá sức chứa của phòng'
                 };
             }
 
