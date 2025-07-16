@@ -247,7 +247,8 @@ router.get('/city/:city', cinemaValidation.getByCity, cinemaController.getCinema
  *     summary: Lấy danh sách tất cả các rạp phim (Public)
  *     description: >
  *       API này cho phép tất cả người dùng xem danh sách tất cả các rạp phim trong hệ thống,
- *       bao gồm cả những rạp đang hoạt động và không hoạt động.
+ *       bao gồm cả những rạp đang hoạt động (Active) và không hoạt động (Inactive).
+ *       Không bao gồm những rạp đã bị xóa mềm (Status = 'Deleted').
  *     tags: [Cinemas]
  *     responses:
  *       200:
@@ -381,11 +382,14 @@ router.put('/:id', authMiddleware, authorizeCinemaManager(), cinemaValidation.up
  * @swagger
  * /api/cinemas/{id}:
  *   delete:
- *     summary: Xóa rạp phim (Chỉ Admin)
+ *     summary: Xóa mềm rạp phim (Chỉ Admin)
  *     description: >
- *       API này cho phép người dùng có vai trò Admin xóa một rạp phim khỏi hệ thống.
- *       Lưu ý rằng không thể xóa rạp phim đã có phòng chiếu hoặc đã có lịch chiếu.
- *       Hệ thống sẽ kiểm tra các ràng buộc trước khi cho phép xóa.
+ *       API này cho phép người dùng có vai trò Admin xóa mềm một rạp phim khỏi hệ thống.
+ *       Thực hiện xóa mềm bằng cách cập nhật Status thành 'Deleted' thay vì xóa cứng khỏi database.
+ *       Hệ thống sẽ kiểm tra các ràng buộc trước khi cho phép xóa:
+ *       - Không thể xóa rạp còn có manager hoặc staff được phân công
+ *       - Không thể xóa rạp đã có phòng chiếu hoặc booking đang hoạt động
+ *       Rạp đã xóa mềm sẽ không hiển thị trong danh sách rạp công khai.
  *     tags: [Cinemas]
  *     security:
  *       - bearerAuth: []
@@ -398,15 +402,15 @@ router.put('/:id', authMiddleware, authorizeCinemaManager(), cinemaValidation.up
  *         description: ID của rạp phim
  *     responses:
  *       200:
- *         description: Rạp phim đã được xóa
+ *         description: Rạp phim đã được xóa mềm thành công
  *       400:
- *         description: Không thể xóa rạp phim do có ràng buộc
+ *         description: Không thể xóa rạp phim do có manager/staff được phân công hoặc có ràng buộc khác
  *       401:
  *         description: Không có quyền truy cập (chưa đăng nhập)
  *       403:
  *         description: Không có quyền thực hiện hành động này (không phải Admin)
  *       404:
- *         description: Không tìm thấy rạp phim
+ *         description: Không tìm thấy rạp phim hoặc rạp đã được xóa
  *       500:
  *         description: Lỗi server
  */
@@ -442,11 +446,11 @@ router.get('/:cinemaId/rooms', cinemaController.getCinemaRooms);
  * @swagger
  * /api/cinemas/{cinemaId}/rooms:
  *   post:
- *     summary: Tạo phòng chiếu mới cho rạp phim (Chỉ Admin)
+ *     summary: Tạo phòng chiếu mới cho rạp phim (Admin/Manager)
  *     description: >
- *       API này cho phép người dùng có vai trò Admin tạo một phòng chiếu mới cho một rạp phim cụ thể.
- *       Admin cần chỉ định ID của rạp phim và cung cấp thông tin chi tiết về phòng chiếu mới.
- *       Đây là API dành riêng cho Admin, khác với API quản lý phòng chiếu dành cho Manager.
+ *       API này cho phép người dùng có vai trò Admin hoặc Manager tạo một phòng chiếu mới cho một rạp phim cụ thể.
+ *       Admin có thể tạo phòng cho bất kỳ rạp nào bằng cách chỉ định cinemaId trong URL.
+ *       Manager chỉ có thể tạo phòng cho rạp mà họ quản lý, hệ thống sẽ tự động kiểm tra quyền.
  *     tags: [Cinemas]
  *     security:
  *       - bearerAuth: []
@@ -492,13 +496,13 @@ router.get('/:cinemaId/rooms', cinemaController.getCinemaRooms);
  *       401:
  *         description: Không có quyền truy cập (chưa đăng nhập)
  *       403:
- *         description: Không có quyền thực hiện hành động này (không phải Admin)
+ *         description: Không có quyền thực hiện hành động này (không phải Admin/Manager hoặc Manager không quản lý rạp này)
  *       404:
  *         description: Không tìm thấy rạp phim
  *       500:
  *         description: Lỗi server
  */
-router.post('/:cinemaId/rooms', authMiddleware, authorizeRoles('Admin'), cinemaController.createCinemaRoom);
+router.post('/:cinemaId/rooms', authMiddleware, authorizeRoles('Admin', 'Manager'), cinemaController.createCinemaRoom);
 
 /**
  * @swagger

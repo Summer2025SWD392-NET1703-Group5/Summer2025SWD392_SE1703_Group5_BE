@@ -855,4 +855,104 @@ router.get('/check-staff-assignments', authMiddleware, authorizeRoles('Admin'), 
  */
 router.put('/reassign-staff', authMiddleware, authorizeRoles('Admin'), userController.reassignStaff);
 
+/**
+ * @swagger
+ * /api/user/manager/{managerId}/remove-from-cinema:
+ *   delete:
+ *     summary: Xóa gán Manager khỏi rạp phim
+ *     description: |
+ *       API này cho phép Admin xóa gán Manager khỏi rạp phim.
+ *       Manager sẽ được set Cinema_ID = null và không còn quản lý rạp nào.
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: managerId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của Manager cần xóa gán
+ *     responses:
+ *       200:
+ *         description: Xóa gán Manager thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Đã xóa gán Manager John Doe khỏi rạp phim"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     User_ID:
+ *                       type: integer
+ *                     Full_Name:
+ *                       type: string
+ *                     Email:
+ *                       type: string
+ *       400:
+ *         description: Dữ liệu không hợp lệ hoặc Manager chưa được gán rạp
+ *       404:
+ *         description: Không tìm thấy Manager
+ *       500:
+ *         description: Lỗi server
+ */
+router.delete('/manager/:managerId/remove-from-cinema', authMiddleware, authorizeRoles('Admin'), userController.removeManagerFromCinema);
+
+/**
+ * @swagger
+ * /api/user/staff/{staffId}/remove-from-cinema:
+ *   delete:
+ *     summary: Xóa gán Staff khỏi rạp phim
+ *     description: |
+ *       API này cho phép Admin xóa gán Staff khỏi rạp phim.
+ *       Staff sẽ được set Cinema_ID = null và không còn làm việc tại rạp nào.
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: staffId
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: ID của Staff cần xóa gán
+ *     responses:
+ *       200:
+ *         description: Xóa gán Staff thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Đã xóa phân công nhân viên Jane Smith khỏi rạp phim"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     User_ID:
+ *                       type: integer
+ *                     Full_Name:
+ *                       type: string
+ *                     Email:
+ *                       type: string
+ *       400:
+ *         description: Dữ liệu không hợp lệ hoặc Staff chưa được gán rạp
+ *       404:
+ *         description: Không tìm thấy Staff
+ *       500:
+ *         description: Lỗi server
+ */
+router.delete('/staff/:staffId/remove-from-cinema', authMiddleware, authorizeRoles('Admin'), userController.removeStaffFromCinema);
+
 module.exports = router;

@@ -398,13 +398,16 @@ const createShowtimeWithCorrectTime = (model, userId, transaction = null, allowE
     // OPTIMIZATION 8: Chạy song song việc tạo showtime và update movie status
     const [newShowtime] = await Promise.all([
       Showtime.create(showtime, transactionOption),
-      // Chỉ update movie status nếu cần thiết
-      (movie.Status === 'Coming Soon' && new Date(model.Show_Date) <= new Date()) 
+      // 🔧 FIX: Chỉ update movie status nếu cần thiết và phim không bị Inactive
+      (movie.Status === 'Coming Soon' && movie.Status !== 'Inactive' && new Date(model.Show_Date) <= new Date())
         ? Movie.update(
-            { Status: 'Now Showing' }, 
-            { 
-              where: { Movie_ID: model.Movie_ID },
-              ...transactionOption 
+            { Status: 'Now Showing' },
+            {
+              where: {
+                Movie_ID: model.Movie_ID,
+                Status: { [Op.ne]: 'Inactive' } // Đảm bảo không cập nhật phim Inactive
+              },
+              ...transactionOption
             }
           )
         : Promise.resolve()
@@ -2011,13 +2014,13 @@ class ShowtimeService {
   }
 
   /**
-   * Lấy danh sách xuất chiếu thuộc rạp của manager
+   * Lấy tất cả xuất chiếu thuộc rạp của manager (bao gồm tất cả trạng thái)
    * @param {number} userId - ID của manager
-   * @returns {Promise<Array>} - Danh sách xuất chiếu
+   * @returns {Promise<Array>} - Danh sách tất cả xuất chiếu của rạp
    */
   async getShowtimesByManagerCinema(userId) {
     try {
-      logger.info(`[getShowtimesByManagerCinema] Lấy danh sách xuất chiếu cho manager ID: ${userId}`);
+      logger.info(`[getShowtimesByManagerCinema] Lấy tất cả xuất chiếu của rạp cho manager ID: ${userId}`);
       
       // Lấy thông tin rạp mà manager quản lý
       const manager = await sequelize.models.User.findOne({
@@ -2074,12 +2077,11 @@ class ShowtimeService {
         };
       }
 
-      // Chỉ lấy các xuất chiếu có trạng thái không phải Hidden 
-      // và thuộc các phòng trong rạp của manager
+      // Lấy tất cả các xuất chiếu thuộc các phòng trong rạp của manager
+      // (bao gồm cả những showtime có trạng thái khác nhau)
       const showtimes = await Showtime.findAll({
         where: {
-          Cinema_Room_ID: { [Op.in]: cinemaRoomIds },
-          Status: { [Op.ne]: 'Hidden' }
+          Cinema_Room_ID: { [Op.in]: cinemaRoomIds }
         },
         include: [
           {
@@ -2151,7 +2153,7 @@ class ShowtimeService {
         showtimes: formattedShowtimes
       };
     } catch (error) {
-      logger.error(`[getShowtimesByManagerCinema] Lỗi khi lấy danh sách xuất chiếu: ${error.message}`);
+      logger.error(`[getShowtimesByManagerCinema] Lỗi khi lấy tất cả xuất chiếu của rạp: ${error.message}`);
       throw error;
     }
   }

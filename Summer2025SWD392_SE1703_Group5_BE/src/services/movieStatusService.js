@@ -120,12 +120,17 @@ class MovieStatusService {
 
             this.logger.info(`[MovieStatusService] Bắt đầu kiểm tra trạng thái phim - ${today.toISOString().split('T')[0]}`);
 
-            // 0. Lấy tất cả phim để kiểm tra
+            // 0. Lấy tất cả phim để kiểm tra (bỏ qua phim Inactive)
             const allMovies = await Movie.findAll({
-                attributes: ['Movie_ID', 'Movie_Name', 'Status', 'Release_Date', 'Premiere_Date', 'End_Date']
+                attributes: ['Movie_ID', 'Movie_Name', 'Status', 'Release_Date', 'Premiere_Date', 'End_Date'],
+                where: {
+                    Status: {
+                        [Op.ne]: 'Inactive' // Không lấy phim có trạng thái Inactive
+                    }
+                }
             });
 
-            this.logger.info(`[MovieStatusService] Tìm thấy ${allMovies.length} phim để kiểm tra`);
+            this.logger.info(`[MovieStatusService] Tìm thấy ${allMovies.length} phim để kiểm tra (bỏ qua phim Inactive)`);
 
             // Kiểm tra và cập nhật trạng thái phim một cách hợp lý
             const moviesToUpdate = [];
