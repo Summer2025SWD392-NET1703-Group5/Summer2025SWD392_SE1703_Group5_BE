@@ -13,9 +13,6 @@ module.exports = (sequelize, DataTypes) => {
     Layout_ID: { type: DataTypes.INTEGER, allowNull: false },
     Seat_Number: { type: DataTypes.STRING, allowNull: false },
     Is_Active: { type: DataTypes.BOOLEAN, defaultValue: true },
-    Showtime_ID: { type: DataTypes.INTEGER, allowNull: true },
-    Status: { type: DataTypes.STRING, allowNull: true },
-    User_ID: { type: DataTypes.INTEGER, allowNull: true }
   }, {
     sequelize,
     modelName: 'Seat',

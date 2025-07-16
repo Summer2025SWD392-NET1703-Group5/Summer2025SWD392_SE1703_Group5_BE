@@ -627,16 +627,17 @@ router.get('/:id/seats-info', showtimeController.getShowtimeWithSeatsInfo);
  * @swagger
  * /api/showtimes/manager/cinema:
  *   get:
- *     summary: Lấy danh sách xuất chiếu của rạp mà manager quản lý (Chỉ Manager)
+ *     summary: Lấy tất cả xuất chiếu của rạp mà manager quản lý (Chỉ Manager)
  *     description: >
- *       API này cho phép người dùng có vai trò Manager xem danh sách tất cả xuất chiếu của rạp phim mà họ đang quản lý.
+ *       API này cho phép người dùng có vai trò Manager xem tất cả xuất chiếu của rạp phim mà họ đang quản lý,
+ *       bao gồm tất cả trạng thái (Scheduled, Completed, Cancelled, Hidden, v.v.).
  *       Kết quả bao gồm thông tin về phim, phòng chiếu, ngày và giờ chiếu.
  *     tags: [Showtimes]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Danh sách xuất chiếu của rạp
+ *         description: Danh sách tất cả xuất chiếu của rạp (bao gồm tất cả trạng thái)
  *       401:
  *         description: Không có quyền truy cập (chưa đăng nhập)
  *       403:

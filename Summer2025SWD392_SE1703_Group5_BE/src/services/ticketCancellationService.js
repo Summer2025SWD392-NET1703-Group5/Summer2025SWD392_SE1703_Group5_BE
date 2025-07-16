@@ -107,9 +107,9 @@ class TicketCancellationService {
                 };
             }
 
-            // Tìm các vé cần hủy bằng SQL trực tiếp
-            const [expiredTicketsFromSQL] = await sequelize.query(`
-                SELECT 
+            // Tìm các vé cần hủy bằng cách join manual để tránh lỗi associations
+            const expiredTickets = await sequelize.query(`
+                SELECT
                     t.Ticket_ID,
                     t.Booking_ID,
                     s.Showtime_ID,
@@ -117,25 +117,74 @@ class TicketCancellationService {
                     s.Start_Time,
                     s.End_Time,
                     m.Movie_Name,
-                    m.Duration,
-                    DATEADD(MINUTE, m.Duration + ${this.gracePeriodMinutes}, 
-                           CAST(CONCAT(s.Show_Date, ' ', s.Start_Time) AS DATETIME)) as ExpectedEndTime,
-                    GETDATE() as CurrentTime,
-                    DATEDIFF(minute, 
-                           DATEADD(MINUTE, m.Duration + ${this.gracePeriodMinutes}, 
-                                  CAST(CONCAT(s.Show_Date, ' ', s.Start_Time) AS DATETIME)), 
-                           GETDATE()) as MinutesOverdue
+                    m.Duration
                 FROM ksf00691_team03.Tickets t
                 INNER JOIN ksf00691_team03.Ticket_Bookings tb ON t.Booking_ID = tb.Booking_ID
                 INNER JOIN ksf00691_team03.Showtimes s ON tb.Showtime_ID = s.Showtime_ID
                 INNER JOIN ksf00691_team03.Movies m ON s.Movie_ID = m.Movie_ID
                 WHERE t.Status = 'Active'
                     AND tb.Status = 'Confirmed'
-                    AND DATEADD(MINUTE, m.Duration + ${this.gracePeriodMinutes}, 
-                               CAST(CONCAT(s.Show_Date, ' ', s.Start_Time) AS DATETIME)) < GETDATE()
-            `);
+            `, {
+                type: sequelize.QueryTypes.SELECT
+            });
 
-            this.logger.info(`[TicketCancellationService] SQL tìm thấy ${expiredTicketsFromSQL.length} vé cần hủy`);
+            // Filter expired tickets in JavaScript để tránh SQL date conversion issues
+            const now = new Date();
+            const expiredTicketsFromSQL = [];
+
+            for (const ticket of expiredTickets) {
+                try {
+                    // Parse show date and time safely
+                    let showDateTime;
+
+                    // Handle different date formats
+                    if (ticket.Show_Date && ticket.Start_Time) {
+                        // Convert Show_Date to proper date format
+                        const showDate = new Date(ticket.Show_Date);
+
+                        // Parse Start_Time (could be HH:mm:ss or HH:mm format)
+                        const timeStr = ticket.Start_Time.toString();
+                        const timeParts = timeStr.split(':');
+                        const hours = parseInt(timeParts[0]) || 0;
+                        const minutes = parseInt(timeParts[1]) || 0;
+                        const seconds = parseInt(timeParts[2]) || 0;
+
+                        // Create combined datetime
+                        showDateTime = new Date(showDate);
+                        showDateTime.setHours(hours, minutes, seconds, 0);
+                    } else {
+                        this.logger.warn(`[TicketCancellationService] Invalid date/time for ticket ${ticket.Ticket_ID}`);
+                        continue;
+                    }
+
+                    // Calculate expected end time (movie duration + grace period)
+                    const durationMinutes = parseInt(ticket.Duration) || 0;
+                    const expectedEndTime = new Date(showDateTime.getTime() + (durationMinutes + this.gracePeriodMinutes) * 60000);
+
+                    // Check if ticket is expired
+                    if (expectedEndTime < now) {
+                        const minutesOverdue = Math.floor((now - expectedEndTime) / 60000);
+
+                        expiredTicketsFromSQL.push({
+                            Ticket_ID: ticket.Ticket_ID,
+                            Booking_ID: ticket.Booking_ID,
+                            Showtime_ID: ticket.Showtime_ID,
+                            Show_Date: ticket.Show_Date,
+                            Start_Time: ticket.Start_Time,
+                            End_Time: ticket.End_Time,
+                            Movie_Name: ticket.Movie_Name,
+                            Duration: ticket.Duration,
+                            ExpectedEndTime: expectedEndTime,
+                            CurrentTime: now,
+                            MinutesOverdue: minutesOverdue
+                        });
+                    }
+                } catch (error) {
+                    this.logger.warn(`[TicketCancellationService] Lỗi khi xử lý ticket ${ticket.Ticket_ID}:`, error.message);
+                }
+            }
+
+            this.logger.info(`[TicketCancellationService] Tìm thấy ${expiredTicketsFromSQL.length} vé cần hủy`);
 
             if (expiredTicketsFromSQL.length === 0) {
                 this.logger.info('[TicketCancellationService] ✅ Không có vé nào cần hủy');

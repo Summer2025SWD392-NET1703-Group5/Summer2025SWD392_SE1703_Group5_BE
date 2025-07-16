@@ -1,391 +1,581 @@
-// src/services/promotionExpirationService.js
-const logger = require('../utils/logger');
-const { Promotion, PromotionUsage, TicketBooking, sequelize } = require('../models');
-const { Op } = require('sequelize');
+const express = require('express');
+const router = express.Router();
+const promotionController = require('../controllers/promotionController');
+const { authMiddleware, authorizeRoles } = require('../middlewares/authMiddleware');
 
 /**
- * Background Service để tự động ẩn promotion hết hạn
- * Chuyển promotion từ 'Active' thành 'Expired' khi qua End_Date
+ * @swagger
+ * tags:
+ *   name: Promotions
+ *   description: Promotion/Discount management system
  */
-class PromotionExpirationService {
-    constructor() {
-        this.logger = logger;
-        // 🔧 TEMP: Giảm thời gian chạy để test (5 phút một lần thay vì 6 giờ)
-        this.checkInterval = 1 * 60 * 1000; // 5 phút = 300000ms (thay vì 6 giờ)
 
-        // Biến để lưu trữ interval ID
-        this.intervalId = null;
+// Public routes (không cần authentication)
 
-        // Biến để lưu trữ timeout ID cho lần chạy đầu tiên
-        this.timeoutId = null;
+/**
+ * @swagger
+ * /api/promotions/available:
+ *   get:
+ *     summary: Lấy danh sách tất cả các khuyến mãi (Public)
+ *     description: >
+ *       API này cho phép tất cả người dùng (kể cả chưa đăng nhập) xem danh sách các khuyến mãi hiện có trong hệ thống.
+ *       Kết quả bao gồm các khuyến mãi đang có hiệu lực để khách hàng có thể sử dụng khi đặt vé.
+ *     tags: [Promotions]
+ *     responses:
+ *       200:
+ *         description: Danh sách tất cả các khuyến mãi
+ */
+router.get('/available', promotionController.getAvailablePromotions);
 
-        // Biến để kiểm soát việc dừng service
-        this.isRunning = false;
+/**
+ * @swagger
+ * /api/promotions/validate/{code}:
+ *   get:
+ *     summary: Validate promotion code (Yêu cầu đăng nhập)
+ *     description: >
+ *       API này cho phép người dùng đã đăng nhập kiểm tra tính hợp lệ của mã khuyến mãi.
+ *       Hệ thống sẽ kiểm tra mã có tồn tại không, còn hiệu lực không, và người dùng có đủ điều kiện sử dụng không.
+ *       Nếu hợp lệ, API sẽ trả về thông tin chi tiết về khuyến mãi và số tiền được giảm.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: code
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Mã khuyến mãi cần kiểm tra (ví dụ TEST)
+ *       - in: query
+ *         name: totalAmount
+ *         schema:
+ *           type: number
+ *         description: Tổng số tiền đơn hàng (nếu có)
+ *     responses:
+ *       200:
+ *         description: Kết quả kiểm tra mã khuyến mãi
+ */
+router.get('/validate/:code', authMiddleware, promotionController.validatePromotionCode);
 
-        // Đếm số lần kiểm tra
-        this.totalChecks = 0;
-        this.totalExpiredPromotions = 0;
+/**
+ * @swagger
+ * /api/promotions/apply:
+ *   post:
+ *     summary: Apply promotion to booking (Yêu cầu đăng nhập)
+ *     description: >
+ *       API này cho phép người dùng đã đăng nhập áp dụng mã khuyến mãi vào đơn đặt vé của mình.
+ *       Người dùng chỉ có thể áp dụng mã khuyến mãi cho đơn đặt vé của chính mình.
+ *       Hệ thống sẽ kiểm tra tính hợp lệ của mã khuyến mãi và áp dụng giảm giá nếu đủ điều kiện.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - bookingId
+ *               - promotionCode
+ *             properties:
+ *               bookingId:
+ *                 type: integer
+ *               promotionCode:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Promotion applied successfully
+ *       400:
+ *         description: Mã khuyến mãi không hợp lệ hoặc không áp dụng được
+ *       403:
+ *         description: Không có quyền áp dụng khuyến mãi cho đơn này
+ *       404:
+ *         description: Không tìm thấy đơn đặt vé hoặc mã khuyến mãi
+ */
+router.post('/apply', authMiddleware, promotionController.applyPromotion);
 
-        // Tính toán thời gian đến 00:00 tiếp theo để chạy vào nửa đêm
-        this.calculateTimeToNextMidnight = () => {
-            const now = new Date();
-            const nextMidnight = new Date();
-            nextMidnight.setHours(24, 0, 0, 0); // Set to next midnight (00:00)
-            return nextMidnight - now;
-        };
-    }
+/**
+ * @swagger
+ * /api/promotions/remove/{bookingId}:
+ *   delete:
+ *     summary: Remove promotion from booking (Yêu cầu đăng nhập)
+ *     description: >
+ *       API này cho phép người dùng đã đăng nhập xóa mã khuyến mãi đã áp dụng khỏi đơn đặt vé của mình.
+ *       Người dùng chỉ có thể xóa mã khuyến mãi khỏi đơn đặt vé của chính mình.
+ *       Hệ thống sẽ cập nhật lại tổng tiền sau khi xóa khuyến mãi.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Promotion removed successfully
+ *       403:
+ *         description: Không có quyền xóa khuyến mãi cho đơn này
+ *       404:
+ *         description: Không tìm thấy đơn đặt vé hoặc đơn không có khuyến mãi nào
+ */
+router.delete('/remove/:bookingId', authMiddleware, promotionController.removePromotion);
 
-    /**
-     * Bắt đầu background service
-     */
-    async start() {
-        if (this.isRunning) {
-            this.logger.warn('[PromotionExpirationService] Service đã đang chạy');
-            return;
-        }
+/**
+ * @swagger
+ * /api/promotions:
+ *   get:
+ *     summary: Get all promotions (Chỉ Admin)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin xem danh sách tất cả các khuyến mãi trong hệ thống.
+ *       Kết quả bao gồm cả các khuyến mãi đã hết hiệu lực, đã bị vô hiệu hóa hoặc chưa được kích hoạt.
+ *       API này thường được sử dụng trong trang quản trị khuyến mãi.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All promotions retrieved successfully
+ *       403:
+ *         description: Không có quyền truy cập
+ */
+router.get('/', authMiddleware, authorizeRoles('Admin'), promotionController.getAllPromotions);
 
-        try {
-            this.logger.info('[PromotionExpirationService] Đang khởi động service ẩn promotion hết hạn...');
-            
-            // 🔧 TEMP: Chạy lần đầu tiên ngay lập tức và thiết lập interval ngay
-            await this.executeCheck();
+/**
+ * @swagger
+ * /api/promotions/{id}:
+ *   get:
+ *     summary: Get promotion details by ID (Chỉ Admin/Staff/Manager)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin, Staff hoặc Manager xem thông tin chi tiết của một khuyến mãi cụ thể.
+ *       Kết quả bao gồm đầy đủ thông tin về khuyến mãi như tiêu đề, mã, loại giảm giá, điều kiện áp dụng, v.v.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Promotion details retrieved successfully
+ *       403:
+ *         description: Không có quyền truy cập
+ *       404:
+ *         description: Không tìm thấy khuyến mãi
+ */
+router.get('/:id', authMiddleware, authorizeRoles('Admin', 'Staff', 'Manager'), promotionController.getPromotion);
 
-            // 🔧 TEMP: Thiết lập interval để chạy định kỳ mỗi 5 phút (thay vì chờ đến nửa đêm)
-            this.logger.info(`[PromotionExpirationService] Sẽ chạy lại sau mỗi ${this.checkInterval / (60 * 1000)} phút`);
+/**
+ * @swagger
+ * /api/promotions:
+ *   post:
+ *     summary: Create new promotion (Chỉ Admin)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin tạo một khuyến mãi mới trong hệ thống.
+ *       Người dùng cần cung cấp thông tin đầy đủ về khuyến mãi như tiêu đề, mã, loại giảm giá, thời gian hiệu lực, v.v.
+ *       Các khuyến mãi mới được tạo có thể áp dụng cho tất cả người dùng hoặc các nhóm người dùng cụ thể.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - Title
+ *               - Promotion_Code
+ *               - Start_Date
+ *               - End_Date
+ *               - Discount_Type
+ *               - Discount_Value
+ *             properties:
+ *               Title:
+ *                 type: string
+ *                 example: "Khuyến mãi 50% Ngày Lễ"
+ *               Promotion_Code:
+ *                 type: string
+ *                 example: "HOLIDAY50"
+ *               Start_Date:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2023-12-01T00:00:00"
+ *               End_Date:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2023-12-31T23:59:59"
+ *               Discount_Type:
+ *                 type: string
+ *                 enum: [Percentage, Fixed]
+ *                 example: "Percentage"
+ *               Discount_Value:
+ *                 type: number
+ *                 example: 50
+ *               Minimum_Purchase:
+ *                 type: number
+ *                 example: 100000
+ *               Maximum_Discount:
+ *                 type: number
+ *                 example: 200000
+ *               Applicable_For:
+ *                 type: string
+ *                 enum: [All Users, New Users, VIP Users]
+ *                 example: "All Users"
+ *               Usage_Limit:
+ *                 type: integer
+ *                 example: 100
+ *               Status:
+ *                 type: string
+ *                 enum: [Active, Inactive]
+ *                 example: "Active"
+ *               Promotion_Detail:
+ *                 type: string
+ *                 example: "Khuyến mãi giảm 50% cho tất cả vé xem phim dịp lễ"
+ *     responses:
+ *       201:
+ *         description: Promotion created successfully
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *       403:
+ *         description: Không có quyền truy cập
+ */
+router.post('/', authMiddleware, authorizeRoles('Admin'), promotionController.createPromotion);
 
-            this.intervalId = setInterval(async () => {
-                await this.executeCheck();
-            }, this.checkInterval);
+/**
+ * @swagger
+ * /api/promotions/{id}:
+ *   put:
+ *     summary: Update promotion (Chỉ Admin)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin cập nhật thông tin của một khuyến mãi cụ thể.
+ *       Có thể thay đổi hầu hết các thông tin của khuyến mãi, tuy nhiên một số trường có thể bị hạn chế cập nhật
+ *       nếu khuyến mãi đã được sử dụng bởi người dùng. Hệ thống sẽ báo cáo nếu cập nhật bị giới hạn.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               Title:
+ *                 type: string
+ *                 example: "Khuyến mãi 50% Ngày Lễ (Updated)"
+ *               Promotion_Code:
+ *                 type: string
+ *                 example: "HOLIDAY50"
+ *               Start_Date:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2023-12-01T00:00:00"
+ *               End_Date:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2023-12-31T23:59:59"
+ *               Discount_Type:
+ *                 type: string
+ *                 enum: [Percentage, Fixed]
+ *                 example: "Percentage"
+ *               Discount_Value:
+ *                 type: number
+ *                 example: 50
+ *               Minimum_Purchase:
+ *                 type: number
+ *                 example: 100000
+ *               Maximum_Discount:
+ *                 type: number
+ *                 example: 200000
+ *               Applicable_For:
+ *                 type: string
+ *                 enum: [All Users, New Users, VIP Users]
+ *                 example: "All Users"
+ *               Usage_Limit:
+ *                 type: integer
+ *                 example: 100
+ *               Status:
+ *                 type: string
+ *                 enum: [Active, Inactive]
+ *                 example: "Active"
+ *               Promotion_Detail:
+ *                 type: string
+ *                 example: "Khuyến mãi giảm 50% cho tất cả vé xem phim dịp lễ"
+ *     responses:
+ *       200:
+ *         description: Promotion updated successfully
+ *       400:
+ *         description: Dữ liệu không hợp lệ
+ *       403:
+ *         description: Không có quyền truy cập
+ *       404:
+ *         description: Không tìm thấy khuyến mãi
+ */
+router.put('/:id', authMiddleware, authorizeRoles('Admin'), promotionController.updatePromotion);
 
-            this.isRunning = true;
-            this.logger.info(`[PromotionExpirationService] ✅ Service đã khởi động thành công!`);
-            
-        } catch (error) {
-            this.logger.error('[PromotionExpirationService] ❌ Lỗi khi khởi động service:', error);
-            this.isRunning = false;
-        }
-    }
+/**
+ * @swagger
+ * /api/promotions/{id}:
+ *   delete:
+ *     summary: Delete promotion (Chỉ Admin)
+ *     description: >
+ *       API này cho phép người dùng có vai trò Admin xóa một khuyến mãi khỏi hệ thống.
+ *       Chỉ Admin mới có quyền xóa khuyến mãi để đảm bảo tính bảo mật và kiểm soát.
+ *       Lưu ý rằng việc xóa khuyến mãi có thể ảnh hưởng đến đơn hàng đang sử dụng khuyến mãi đó.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Promotion deleted successfully
+ *       403:
+ *         description: Không có quyền truy cập
+ *       404:
+ *         description: Không tìm thấy khuyến mãi
+ *       409:
+ *         description: Không thể xóa khuyến mãi đang được sử dụng
+ */
+router.delete('/:id', authMiddleware, authorizeRoles('Admin'), promotionController.deletePromotion);
 
-    /**
-     * Dừng background service
-     */
-    stop() {
-        if (!this.isRunning) {
-            this.logger.warn('[PromotionExpirationService] Service không đang chạy');
-            return;
-        }
+/**
+ * @swagger
+ * /api/promotions/customer/used-promotions:
+ *   get:
+ *     summary: Lấy danh sách mã khuyến mãi đã sử dụng của người dùng (Dành cho khách hàng)
+ *     description: API này cho phép người dùng đã đăng nhập xem lịch sử mã khuyến mãi đã sử dụng
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lấy danh sách mã khuyến mãi đã sử dụng thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       Promotion_ID:
+ *                         type: integer
+ *                         example: 1
+ *                       Title:
+ *                         type: string
+ *                         example: "Khuyến mãi ngày lễ"
+ *                       Promotion_Code:
+ *                         type: string
+ *                         example: "HOLIDAY2023"
+ *                       Discount_Type:
+ *                         type: string
+ *                         example: "Percentage"
+ *                       Discount_Value:
+ *                         type: number
+ *                         example: 10
+ *                       Applied_Date:
+ *                         type: string
+ *                         format: date-time
+ *                         example: "2023-12-20T08:30:00.000Z"
+ *                       Discount_Amount:
+ *                         type: number
+ *                         example: 20000
+ *                       Booking_ID:
+ *                         type: integer
+ *                         example: 123
+ *                       Booking_Status:
+ *                         type: string
+ *                         example: "Confirmed"
+ *                       Booking_Total:
+ *                         type: number
+ *                         example: 180000
+ *                       Movie_Name:
+ *                         type: string
+ *                         example: "The Avengers"
+ *                       Show_Date:
+ *                         type: string
+ *                         format: date
+ *                         example: "2023-12-20"
+ *                       Start_Time:
+ *                         type: string
+ *                         example: "19:30:00"
+ *                       Discount_Description:
+ *                         type: string
+ *                         example: "Giảm 10% (20.000 VND)"
+ *                 message:
+ *                   type: string
+ *                   example: "Lấy danh sách khuyến mãi đã sử dụng thành công"
+ *       401:
+ *         description: Chưa đăng nhập
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/customer/used-promotions', authMiddleware, promotionController.getUserPromotions);
 
-        try {
-            if (this.intervalId) {
-                clearInterval(this.intervalId);
-                this.intervalId = null;
-            }
+/**
+ * @swagger
+ * /api/promotions/available/{bookingId}:
+ *   get:
+ *     summary: Lấy danh sách mã khuyến mãi phù hợp với booking và chưa được sử dụng
+ *     description: >
+ *       API này trả về danh sách các mã khuyến mãi mà người dùng có thể áp dụng cho booking cụ thể.
+ *       Chỉ hiển thị những mã khuyến mãi còn hiệu lực, phù hợp với giá trị đơn hàng và chưa được người dùng sử dụng.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của đơn đặt vé
+ *         example: 123
+ *     responses:
+ *       200:
+ *         description: Danh sách mã khuyến mãi phù hợp
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Tìm thấy 3 mã khuyến mãi phù hợp"
+ *                 booking_info:
+ *                   type: object
+ *                   properties:
+ *                     Booking_ID:
+ *                       type: integer
+ *                       example: 123
+ *                     Total_Amount:
+ *                       type: number
+ *                       example: 250000
+ *                     User_Name:
+ *                       type: string
+ *                       example: "Nguyễn Văn A"
+ *                 promotions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       Promotion_ID:
+ *                         type: integer
+ *                         example: 1
+ *                       Title:
+ *                         type: string
+ *                         example: "Giảm giá 20% cho khách hàng mới"
+ *                       Promotion_Code:
+ *                         type: string
+ *                         example: "NEWUSER20"
+ *                       Discount_Description:
+ *                         type: string
+ *                         example: "Giảm 20% (tối đa 50,000đ)"
+ *                       Discount_Amount:
+ *                         type: number
+ *                         example: 50000
+ *                       Final_Amount:
+ *                         type: number
+ *                         example: 200000
+ *       400:
+ *         description: Booking ID không hợp lệ
+ *       401:
+ *         description: Chưa xác thực
+ *       404:
+ *         description: Không tìm thấy booking
+ *       500:
+ *         description: Lỗi server
+ */
+router.get('/available/:bookingId', authMiddleware, promotionController.getAvailablePromotionsForBooking);
 
-            if (this.timeoutId) {
-                clearTimeout(this.timeoutId);
-                this.timeoutId = null;
-            }
+/**
+ * @swagger
+ * /api/promotions/points/{bookingId}:
+ *   delete:
+ *     summary: Xóa điểm khỏi booking (hoàn lại điểm đã sử dụng)
+ *     description: >
+ *       API này cho phép xóa điểm đã sử dụng khỏi booking và hoàn lại điểm cho người dùng.
+ *       Chỉ có thể thực hiện với booking có trạng thái "Pending" và đã sử dụng điểm.
+ *     tags: [Promotions]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: bookingId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID của đơn đặt vé
+ *         example: 123
+ *     responses:
+ *       200:
+ *         description: Xóa điểm thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Đã xóa thành công 50 điểm khỏi booking"
+ *                 booking_id:
+ *                   type: integer
+ *                   example: 123
+ *                 points_refunded:
+ *                   type: integer
+ *                   example: 50
+ *                 discount_amount_removed:
+ *                   type: number
+ *                   example: 50000
+ *                 new_total_amount:
+ *                   type: number
+ *                   example: 300000
+ *                 user_new_points_balance:
+ *                   type: integer
+ *                   example: 150
+ *       400:
+ *         description: Booking ID không hợp lệ hoặc booking không có điểm được sử dụng
+ *       401:
+ *         description: Chưa xác thực
+ *       404:
+ *         description: Không tìm thấy booking
+ *       500:
+ *         description: Lỗi server
+ */
+router.delete('/points/:bookingId', authMiddleware, promotionController.removePointsFromBooking);
 
-            this.isRunning = false;
-            this.logger.info('[PromotionExpirationService] ✅ Service đã dừng thành công');
-            
-        } catch (error) {
-            this.logger.error('[PromotionExpirationService] ❌ Lỗi khi dừng service:', error);
-        }
-    }
+// 🔧 TEST: Route để test promotion expiration service
+router.post('/test-expiration', authMiddleware, authorizeRoles('Admin'), promotionController.testPromotionExpiration);
 
-    /**
-     * Thực hiện kiểm tra và ẩn promotion hết hạn
-     */
-    async executeCheck() {
-        const startTime = new Date();
-        this.totalChecks++;
+// 🔧 FORCE: Route để force expire promotion hết hạn
+router.post('/force-expire', authMiddleware, authorizeRoles('Admin'), promotionController.forceExpirePromotions);
 
-        try {
-            // Lấy ngày hiện tại (chỉ ngày, không có giờ)
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            this.logger.info(`[PromotionExpirationService] 🔍 Bắt đầu kiểm tra promotion hết hạn lần thứ ${this.totalChecks} - ${today.toISOString().split('T')[0]}`);
-
-            // Kiểm tra xem models có tồn tại không
-            if (!Promotion) {
-                this.logger.warn('[PromotionExpirationService] Model Promotion chưa được khởi tạo, bỏ qua lần kiểm tra này');
-                return {
-                    message: 'Model Promotion chưa sẵn sàng',
-                    currentTime: startTime,
-                    totalChecks: this.totalChecks
-                };
-            }
-
-            // 🔧 DEBUG: Kiểm tra tất cả promotion Active trước
-            const [allActivePromotions] = await sequelize.query(`
-                SELECT
-                    p.Promotion_ID,
-                    p.Title,
-                    p.Promotion_Code,
-                    p.Status,
-                    p.End_Date,
-                    CAST(GETDATE() AS DATE) as CurrentDate,
-                    CASE
-                        WHEN CAST(p.End_Date AS DATE) < CAST(GETDATE() AS DATE) THEN 'SHOULD_EXPIRE'
-                        ELSE 'VALID'
-                    END as ShouldExpire
-                FROM ksf00691_team03.Promotions p
-                WHERE p.Status = 'Active'
-                ORDER BY p.End_Date ASC
-            `);
-
-            this.logger.info(`[PromotionExpirationService] 📊 Tổng cộng ${allActivePromotions.length} promotion Active:`);
-            allActivePromotions.forEach(promo => {
-                this.logger.info(`   - ID: ${promo.Promotion_ID} | Code: ${promo.Promotion_Code} | End: ${promo.End_Date} | ${promo.ShouldExpire}`);
-            });
-
-            // Tìm các promotion cần expire bằng SQL trực tiếp
-            const [expiredPromotionsFromSQL] = await sequelize.query(`
-                SELECT 
-                    p.Promotion_ID,
-                    p.Title,
-                    p.Promotion_Code,
-                    p.Status,
-                    p.End_Date,
-                    CAST(GETDATE() AS DATE) as CurrentDate,
-                    DATEDIFF(day, p.End_Date, CAST(GETDATE() AS DATE)) as DaysOverdue
-                FROM ksf00691_team03.Promotions p
-                WHERE p.Status = 'Active'
-                    AND CAST(p.End_Date AS DATE) < CAST(GETDATE() AS DATE)
-            `);
-
-            this.logger.info(`[PromotionExpirationService] SQL tìm thấy ${expiredPromotionsFromSQL.length} promotion cần expire`);
-
-            if (expiredPromotionsFromSQL.length === 0) {
-                this.logger.info('[PromotionExpirationService] ✅ Không có promotion nào cần expire');
-                return {
-                    message: 'Không có promotion hết hạn',
-                    currentTime: startTime,
-                    totalChecks: this.totalChecks,
-                    totalExpiredPromotions: this.totalExpiredPromotions
-                };
-            }
-
-            // Xử lý từng promotion hết hạn
-            let expiredCount = 0;
-            const expiredPromotions = [];
-
-            for (const sqlPromotion of expiredPromotionsFromSQL) {
-                try {
-                    this.logger.warn(`[PromotionExpirationService] Promotion "${sqlPromotion.Title}" (${sqlPromotion.Promotion_Code}) đã hết hạn ${sqlPromotion.DaysOverdue} ngày`);
-
-                    const result = await this.expirePromotion(sqlPromotion);
-                    if (result.success) {
-                        expiredCount++;
-                        expiredPromotions.push({
-                            id: sqlPromotion.Promotion_ID,
-                            title: sqlPromotion.Title,
-                            code: sqlPromotion.Promotion_Code
-                        });
-                        this.totalExpiredPromotions++;
-                    }
-
-                } catch (error) {
-                    this.logger.error(`[PromotionExpirationService] Lỗi khi expire promotion #${sqlPromotion.Promotion_ID}:`, error);
-                }
-            }
-
-            const endTime = new Date();
-            const duration = endTime - startTime;
-
-            this.logger.info(`[PromotionExpirationService] ✅ Hoàn thành kiểm tra: ${expiredCount}/${expiredPromotionsFromSQL.length} promotion đã được expire trong ${duration}ms`);
-
-            return {
-                message: `Đã expire ${expiredCount} promotion hết hạn`,
-                expiredPromotions,
-                totalProcessed: expiredPromotionsFromSQL.length,
-                totalExpired: expiredCount,
-                duration: `${duration}ms`,
-                totalChecks: this.totalChecks,
-                totalExpiredPromotions: this.totalExpiredPromotions
-            };
-
-        } catch (error) {
-            this.logger.error('[PromotionExpirationService] ❌ Lỗi trong quá trình kiểm tra:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Expire một promotion hết hạn
-     */
-    async expirePromotion(promotionData) {
-        const transaction = await sequelize.transaction();
-
-        try {
-            // Kiểm tra xem promotion có đang được sử dụng trong booking active không
-            const activeUsage = await PromotionUsage.count({
-                include: [{
-                    model: TicketBooking,
-                    as: 'TicketBooking',
-                    where: {
-                        Status: { [Op.in]: ['Pending', 'Confirmed'] }
-                    },
-                    required: true
-                }],
-                where: {
-                    Promotion_ID: promotionData.Promotion_ID,
-                    HasUsed: true
-                },
-                transaction
-            });
-
-            if (activeUsage > 0) {
-                this.logger.warn(`[PromotionExpirationService] Promotion #${promotionData.Promotion_ID} đang được sử dụng trong ${activeUsage} booking active, chỉ đánh dấu expired`);
-            }
-
-            // Cập nhật trạng thái promotion thành 'Expired'
-            const [updatedRows] = await Promotion.update(
-                { 
-                    Status: 'Expired',
-                    Updated_At: new Date()
-                },
-                { 
-                    where: { 
-                        Promotion_ID: promotionData.Promotion_ID,
-                        Status: 'Active'
-                    },
-                    transaction 
-                }
-            );
-
-            if (updatedRows === 0) {
-                await transaction.rollback();
-                return {
-                    success: false,
-                    message: `Promotion #${promotionData.Promotion_ID} không thể expire (có thể đã được expire trước đó)`
-                };
-            }
-
-            // Log chi tiết
-            this.logger.info(`[PromotionExpirationService] ✅ Đã expire promotion #${promotionData.Promotion_ID} - "${promotionData.Title}" (${promotionData.Promotion_Code})`);
-
-            await transaction.commit();
-
-            return {
-                success: true,
-                message: `Đã expire promotion #${promotionData.Promotion_ID}`,
-                promotionId: promotionData.Promotion_ID,
-                title: promotionData.Title,
-                code: promotionData.Promotion_Code,
-                endDate: promotionData.End_Date,
-                activeUsage: activeUsage
-            };
-
-        } catch (error) {
-            await transaction.rollback();
-            this.logger.error(`[PromotionExpirationService] Lỗi khi expire promotion #${promotionData.Promotion_ID}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Lấy thống kê service
-     */
-    getStats() {
-        return {
-            isRunning: this.isRunning,
-            totalChecks: this.totalChecks,
-            totalExpiredPromotions: this.totalExpiredPromotions,
-            checkInterval: this.checkInterval,
-            nextMidnight: this.calculateTimeToNextMidnight(),
-            nextCheckIn: this.intervalId ? 'Running' : 'Scheduled for midnight'
-        };
-    }
-
-    /**
-     * Force check một promotion cụ thể
-     */
-    async forceCheckPromotion(promotionId) {
-        try {
-            this.logger.info(`[PromotionExpirationService] Force check promotion #${promotionId}...`);
-
-            // Kiểm tra promotion bằng SQL
-            const [sqlCheck] = await sequelize.query(`
-                SELECT 
-                    p.Promotion_ID,
-                    p.Title,
-                    p.Promotion_Code,
-                    p.Status,
-                    p.End_Date,
-                    CAST(GETDATE() AS DATE) as CurrentDate,
-                    CASE WHEN CAST(p.End_Date AS DATE) < CAST(GETDATE() AS DATE)
-                         THEN 1 ELSE 0 END as IsExpired
-                FROM ksf00691_team03.Promotions p
-                WHERE p.Promotion_ID = ${promotionId}
-            `);
-
-            if (!sqlCheck || sqlCheck.length === 0) {
-                return {
-                    success: false,
-                    message: `Không tìm thấy promotion #${promotionId}`
-                };
-            }
-
-            const promotionInfo = sqlCheck[0];
-
-            if (promotionInfo.Status !== 'Active') {
-                return {
-                    success: false,
-                    message: `Promotion #${promotionId} đã có trạng thái: ${promotionInfo.Status}`
-                };
-            }
-
-            if (!promotionInfo.IsExpired) {
-                return {
-                    success: false,
-                    message: `Promotion #${promotionId} chưa hết hạn. End_Date: ${promotionInfo.End_Date}`
-                };
-            }
-
-            // Promotion đã hết hạn, tiến hành expire
-            const result = await this.expirePromotion(promotionInfo);
-
-            return {
-                success: true,
-                message: `Đã force expire promotion #${promotionId}`,
-                result
-            };
-
-        } catch (error) {
-            this.logger.error(`[PromotionExpirationService] Lỗi khi force check promotion #${promotionId}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Lấy danh sách promotion sắp hết hạn (trong vòng N ngày)
-     */
-    async getPromotionsNearExpiration(daysAhead = 7) {
-        try {
-            const [results] = await sequelize.query(`
-                SELECT 
-                    p.Promotion_ID,
-                    p.Title,
-                    p.Promotion_Code,
-                    p.End_Date,
-                    DATEDIFF(day, CAST(GETDATE() AS DATE), CAST(p.End_Date AS DATE)) as DaysLeft
-                FROM ksf00691_team03.Promotions p
-                WHERE p.Status = 'Active'
-                    AND CAST(p.End_Date AS DATE) >= CAST(GETDATE() AS DATE)
-                    AND DATEDIFF(day, CAST(GETDATE() AS DATE), CAST(p.End_Date AS DATE)) <= ${daysAhead}
-                ORDER BY p.End_Date ASC
-            `);
-
-            return results || [];
-
-        } catch (error) {
-            this.logger.error(`[PromotionExpirationService] Lỗi khi lấy promotion sắp hết hạn:`, error);
-            throw error;
-        }
-    }
-}
-
-module.exports = new PromotionExpirationService();
+module.exports = router;

@@ -115,14 +115,14 @@ class CinemaService {
     }
 
     /**
-     * Lấy danh sách tất cả các rạp phim trong hệ thống.
+     * Lấy danh sách tất cả các rạp phim trong hệ thống (Active, Inactive - không bao gồm rạp đã xóa mềm).
      * @returns {Promise<Object>} - Danh sách tất cả rạp phim.
      */
     async getAllCinemas() {
-        logger.info('[CinemaService] Bắt đầu lấy danh sách tất cả rạp phim.');
+        logger.info('[CinemaService] Bắt đầu lấy danh sách tất cả rạp phim (không bao gồm rạp đã xóa).');
         try {
             const cinemas = await CinemaRepository.getAll();
-            logger.info(`[CinemaService] Lấy thành công ${cinemas ? cinemas.length : 0} rạp phim.`);
+            logger.info(`[CinemaService] Lấy thành công ${cinemas ? cinemas.length : 0} rạp phim (Active + Inactive).`);
             return {
                 success: true,
                 data: cinemas || []
@@ -290,19 +290,44 @@ class CinemaService {
     }
 
     /**
-     * Xóa một rạp phim (thực chất là xóa mềm bằng cách cập nhật trạng thái).
-     * ✅ SECURITY ENHANCED - Kiểm tra active bookings trước khi xóa
+     * Xóa một rạp phim (xóa mềm bằng cách cập nhật trạng thái thành 'Deleted').
+     * ✅ SECURITY ENHANCED - Kiểm tra manager/staff và active bookings trước khi xóa
      * @param {number} cinemaId - ID của rạp phim cần xóa.
      * @returns {Promise<Object>} - Kết quả xóa.
      */
     async deleteCinema(cinemaId) {
-        logger.info(`[CinemaService] Bắt đầu xử lý xóa rạp phim ID: ${cinemaId}`);
+        logger.info(`[CinemaService] Bắt đầu xử lý xóa mềm rạp phim ID: ${cinemaId}`);
         try {
             // Kiểm tra rạp phim có tồn tại không.
             const cinema = await CinemaRepository.findById(cinemaId);
             if (!cinema) {
                 logger.warn(`[CinemaService] Không tìm thấy rạp phim ID: ${cinemaId} để xóa.`);
                 throw new Error('Không tìm thấy rạp phim');
+            }
+
+            // Kiểm tra rạp đã bị xóa mềm chưa
+            if (cinema.Status === 'Deleted') {
+                logger.warn(`[CinemaService] Rạp phim ID: ${cinemaId} đã được xóa trước đó.`);
+                throw new Error('Rạp phim đã được xóa');
+            }
+
+            // ✅ KIỂM TRA MANAGER VÀ STAFF TRONG RẠP
+            const { User } = require('../models');
+            const managersAndStaff = await User.findAll({
+                where: {
+                    Cinema_ID: cinemaId,
+                    Role: { [Op.in]: ['Manager', 'Staff'] },
+                    Account_Status: { [Op.ne]: 'Deleted' }
+                },
+                attributes: ['User_ID', 'Full_Name', 'Role']
+            });
+
+            if (managersAndStaff && managersAndStaff.length > 0) {
+                const staffList = managersAndStaff.map(user => `${user.Full_Name} (${user.Role})`).join(', ');
+                const errorMsg = `Không thể xóa rạp vì còn có ${managersAndStaff.length} nhân viên đang được phân công: ${staffList}. ` +
+                               `Vui lòng hủy phân công tất cả manager và staff trước khi xóa rạp.`;
+                logger.warn(`[CinemaService] ${errorMsg}`);
+                throw new Error(errorMsg);
             }
 
             // ✅ SECURITY FIX: Kiểm tra active bookings trong TẤT CẢ rooms của cinema trước
@@ -341,18 +366,28 @@ class CinemaService {
             }
 
             // Thực hiện xóa mềm: Cập nhật trạng thái thành 'Deleted'.
-            logger.info(`[CinemaService] Thực hiện xóa mềm cho rạp ID: ${cinemaId}`);
-            const updated = await CinemaRepository.update(cinemaId, { Status: 'Deleted' });
+            logger.info(`[CinemaService] Thực hiện xóa mềm cho rạp ID: ${cinemaId} - ${cinema.Cinema_Name}`);
+            const updated = await CinemaRepository.update(cinemaId, {
+                Status: 'Deleted',
+                Updated_At: new Date()
+            });
             if (!updated) {
-                throw new Error('Xóa rạp phim thất bại ở tầng repository.');
+                throw new Error('Xóa mềm rạp phim thất bại ở tầng repository.');
             }
 
+            logger.info(`[CinemaService] Đã xóa mềm rạp phim thành công: ${cinema.Cinema_Name} (ID: ${cinemaId})`);
             return {
                 success: true,
-                message: 'Xóa rạp phim thành công'
+                message: `Đã xóa mềm rạp phim "${cinema.Cinema_Name}" thành công`,
+                data: {
+                    Cinema_ID: cinemaId,
+                    Cinema_Name: cinema.Cinema_Name,
+                    Previous_Status: cinema.Status,
+                    New_Status: 'Deleted'
+                }
             };
         } catch (error) {
-            logger.error(`[CinemaService] Lỗi khi xóa rạp phim ID ${cinemaId}: ${error.message}`, { stack: error.stack });
+            logger.error(`[CinemaService] Lỗi khi xóa mềm rạp phim ID ${cinemaId}: ${error.message}`, { stack: error.stack });
             throw error;
         }
     }

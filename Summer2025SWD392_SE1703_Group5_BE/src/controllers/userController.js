@@ -371,7 +371,35 @@ class UserController {
 
             // Xử lý logic riêng cho Manager
             if (role === 'Manager') {
-                // Kiểm tra xem rạp đã có manager chưa
+                // 🔧 FIX: Kiểm tra manager đã được phân công cho rạp khác chưa
+                if (user.Cinema_ID && user.Cinema_ID !== cinemaId) {
+                    // Lấy thông tin rạp hiện tại của manager
+                    const currentCinema = await Cinema.findByPk(user.Cinema_ID);
+
+                    logger.warn(`Attempt to assign Manager ${user.Full_Name} (ID: ${userId}) to cinema ${cinemaId}, but already assigned to cinema ${user.Cinema_ID}`);
+
+                    return res.status(400).json({
+                        success: false,
+                        message: `Quản lý ${user.Full_Name} đã được phân công cho rạp ${currentCinema ? currentCinema.Cinema_Name : 'khác'}. Vui lòng hủy phân công hiện tại trước khi gán cho rạp mới.`,
+                        current_assignment: {
+                            Cinema_ID: user.Cinema_ID,
+                            Cinema_Name: currentCinema ? currentCinema.Cinema_Name : 'Không xác định'
+                        },
+                        suggestion: `Sử dụng DELETE /api/user/manager/${userId}/remove-from-cinema để hủy phân công hiện tại trước.`
+                    });
+                }
+
+                // Kiểm tra manager đã được gán cho rạp này chưa
+                if (user.Cinema_ID === cinemaId) {
+                    logger.warn(`Attempt to re-assign Manager ${user.Full_Name} (ID: ${userId}) to same cinema ${cinemaId}`);
+
+                    return res.status(400).json({
+                        success: false,
+                        message: `Quản lý ${user.Full_Name} đã được phân công cho rạp ${cinema.Cinema_Name} rồi.`
+                    });
+                }
+
+                // Kiểm tra xem rạp đích đã có manager khác chưa
                 const existingManager = await User.findOne({
                     where: {
                         Cinema_ID: cinemaId,
@@ -381,9 +409,17 @@ class UserController {
                 });
 
                 if (existingManager) {
+                    logger.warn(`Attempt to assign Manager ${user.Full_Name} (ID: ${userId}) to cinema ${cinemaId}, but cinema already has manager ${existingManager.Full_Name} (ID: ${existingManager.User_ID})`);
+
                     return res.status(400).json({
                         success: false,
-                        message: `Rạp phim ${cinema.Cinema_Name} đã có quản lý là ${existingManager.Full_Name}. Mỗi rạp chỉ được phép có 1 quản lý.`
+                        message: `Rạp phim ${cinema.Cinema_Name} đã có quản lý là ${existingManager.Full_Name}. Mỗi rạp chỉ được phép có 1 quản lý.`,
+                        existing_manager: {
+                            User_ID: existingManager.User_ID,
+                            Full_Name: existingManager.Full_Name,
+                            Email: existingManager.Email
+                        },
+                        suggestion: `Sử dụng DELETE /api/user/manager/${existingManager.User_ID}/remove-from-cinema để hủy phân công manager hiện tại trước.`
                     });
                 }
 
@@ -396,7 +432,7 @@ class UserController {
                     Phone_Number: user.Phone_Number
                 });
 
-                logger.info(`Assigned Manager ${user.Full_Name} to cinema ${cinema.Cinema_Name} and updated contact info`);
+                logger.info(`✅ Successfully assigned Manager ${user.Full_Name} (ID: ${userId}) to cinema ${cinema.Cinema_Name} (ID: ${cinemaId}) and updated contact info`);
 
                 return res.status(200).json({
                     success: true,
@@ -420,18 +456,24 @@ class UserController {
                 if (user.Cinema_ID && user.Cinema_ID !== cinemaId) {
                     // Lấy thông tin rạp hiện tại của staff
                     const currentCinema = await Cinema.findByPk(user.Cinema_ID);
+
+                    logger.warn(`Attempt to assign Staff ${user.Full_Name} (ID: ${userId}) to cinema ${cinemaId}, but already assigned to cinema ${user.Cinema_ID}`);
+
                     return res.status(400).json({
                         success: false,
                         message: `Nhân viên ${user.Full_Name} đã được phân công cho rạp ${currentCinema ? currentCinema.Cinema_Name : 'khác'}. Vui lòng hủy phân công hiện tại trước khi gán cho rạp mới.`,
                         current_assignment: {
                             Cinema_ID: user.Cinema_ID,
                             Cinema_Name: currentCinema ? currentCinema.Cinema_Name : 'Không xác định'
-                        }
+                        },
+                        suggestion: `Sử dụng DELETE /api/user/staff/${userId}/remove-from-cinema để hủy phân công hiện tại trước.`
                     });
                 }
 
                 // Kiểm tra staff đã được gán cho rạp này chưa
                 if (user.Cinema_ID === cinemaId) {
+                    logger.warn(`Attempt to re-assign Staff ${user.Full_Name} (ID: ${userId}) to same cinema ${cinemaId}`);
+
                     return res.status(400).json({
                         success: false,
                         message: `Nhân viên ${user.Full_Name} đã được phân công cho rạp ${cinema.Cinema_Name} rồi.`
@@ -441,7 +483,7 @@ class UserController {
                 // Cập nhật Cinema_ID cho Staff
                 await user.update({ Cinema_ID: cinemaId });
 
-                logger.info(`Assigned Staff ${user.Full_Name} to cinema ${cinema.Cinema_Name}`);
+                logger.info(`✅ Successfully assigned Staff ${user.Full_Name} (ID: ${userId}) to cinema ${cinema.Cinema_Name} (ID: ${cinemaId})`);
 
                 return res.status(200).json({
                     success: true,
