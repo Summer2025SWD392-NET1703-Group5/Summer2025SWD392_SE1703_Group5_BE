@@ -571,7 +571,7 @@ class ShowtimeService {
       const createWithCorrectTime = createShowtimeWithCorrectTime(model, userId, transaction, allowEarlyShowtime);
       return await createWithCorrectTime();
     } catch (error) {
-      // ✅ ENHANCED: Nếu bị conflict, gợi ý giờ trống
+      // Nếu bị conflict, gợi ý giờ trống
       if (error.message === 'Suất chiếu bị trùng lịch') {
         try {
           // Lấy thông tin phim để tính duration
@@ -656,12 +656,35 @@ class ShowtimeService {
 
     const now = new Date();
 
+    if (!showtimeDto.Start_Time) {
+      throw new Error('Start_Time là bắt buộc khi cập nhật showtime');
+    }
+
+    // Đảm bảo format thời gian đúng cách
+    let formattedStartTime = showtimeDto.Start_Time;
+    console.log(`[updateShowtime] Start_Time gốc: ${formattedStartTime}`);
+
+    // Format thời gian nếu cần thiết
+    if (formattedStartTime && !formattedStartTime.includes(':')) {
+      formattedStartTime = `${formattedStartTime}:00:00`;
+    } else if (formattedStartTime && formattedStartTime.split(':').length === 2) {
+      formattedStartTime = `${formattedStartTime}:00`;
+    }
+
+    // Validate format thời gian
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
+    if (!timeRegex.test(formattedStartTime)) {
+      throw new Error(`Định dạng thời gian Start_Time không hợp lệ: ${formattedStartTime}. Yêu cầu format HH:MM:SS`);
+    }
+
+    console.log(`[updateShowtime] Start_Time sau khi format: ${formattedStartTime}`);
+
     // Đảm bảo showDateTime được tạo chính xác
     let showDateTime;
     try {
       // Parse ngày và giờ thành các thành phần riêng biệt
       const [year, month, day] = showtimeDto.Show_Date.split('-').map(Number);
-      const [hours, minutes, seconds = 0] = showtimeDto.Start_Time.split(':').map(Number);
+      const [hours, minutes, seconds = 0] = formattedStartTime.split(':').map(Number);
 
       // Lưu trữ giờ chính xác như người dùng nhập, không chuyển đổi múi giờ
       const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -674,7 +697,7 @@ class ShowtimeService {
       logger.debug(`[updateShowtime] Giờ đã nhập: ${hours}:${minutes}:${seconds}`);
 
       if (isNaN(showDateTime.getTime())) {
-        throw new Error(`Không thể tạo ngày giờ hợp lệ từ ${showtimeDto.Show_Date} ${showtimeDto.Start_Time}`);
+        throw new Error(`Không thể tạo ngày giờ hợp lệ từ ${showtimeDto.Show_Date} ${formattedStartTime}`);
       }
     } catch (error) {
       logger.error(`[updateShowtime] Lỗi khi tạo showDateTime: ${error.message}`);
@@ -727,8 +750,9 @@ class ShowtimeService {
       throw new Error('Không thể tạo thời gian kết thúc hợp lệ');
     }
 
-    // Lưu trữ thời gian bắt đầu chính xác như người dùng nhập vào
-    const startTime = showtimeDto.Start_Time;
+    //Sử dụng thời gian đã được format và validate
+    const startTime = formattedStartTime;
+
 
     // Log thông tin thời gian để debug
     logger.debug(`[updateShowtime] Thời gian bắt đầu: ${startTime}, Thời lượng phim: ${movie.Duration} phút, Thời gian kết thúc: ${endTime}`);
@@ -741,7 +765,7 @@ class ShowtimeService {
       id
     );
     if (!isRoomAvailable) {
-      // ✅ ENHANCED: Gợi ý giờ trống khi update bị conflict
+      //Gợi ý giờ trống khi update bị conflict
       try {
         const totalDuration = movie.Duration + 15; // Phim + cleanup time
         const availableSlots = await this.findAvailableTimeSlots(
@@ -789,7 +813,7 @@ class ShowtimeService {
       updateData.Status = showtimeDto.Status;
     }
 
-    updateData.Updated_At = sequelize.literal('GETDATE()');
+    updateData.Updated_At = new Date();
 
     const updated = await ShowtimeRepository.update(id, updateData);
     if (!updated) {
@@ -801,7 +825,6 @@ class ShowtimeService {
   async hideShowtime(id, userId) {
     let transaction = null;
     try {
-      // Sử dụng trực tiếp model Showtime thay vì ShowtimeRepository
       const showtime = await Showtime.findByPk(id, {
         include: [{ model: Ticket, as: 'Tickets' }]
       });
@@ -810,7 +833,6 @@ class ShowtimeService {
         return false;
       }
 
-      // Kiểm tra các đơn đặt vé đang chờ
       const pendingBookings = showtime.Tickets ?
         showtime.Tickets.filter(booking => booking.Status === 'Pending') :
         await Ticket.findAll({

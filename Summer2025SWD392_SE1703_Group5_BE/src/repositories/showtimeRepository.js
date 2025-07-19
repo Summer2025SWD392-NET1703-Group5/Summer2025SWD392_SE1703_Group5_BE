@@ -195,19 +195,26 @@ class ShowtimeRepository {
 
                 // Xác định kiểu dữ liệu SQL phù hợp
                 let sqlType;
+                let value = dataToUpdate[field];
+
                 if (field === 'Show_Date') {
                     sqlType = sql.Date;
                 } else if (field === 'Start_Time' || field === 'End_Time') {
-                    sqlType = sql.Time;
+                    sqlType = sql.VarChar(8); // HH:MM:SS format
+                    console.log(`[ShowtimeRepository] Setting ${field} as VarChar: ${value}`);                
                 } else if (field === 'Created_At' || field === 'Updated_At') {
                     sqlType = sql.DateTime;
+                    if (!(value instanceof Date)) {
+                        value = new Date(value);
+                    }
+                    console.log(`[ShowtimeRepository] Setting ${field} as DateTime: ${value.toISOString()}`);
                 } else if (field === 'Movie_ID' || field === 'Cinema_Room_ID' || field === 'Created_By' || field === 'Updated_By') {
                     sqlType = sql.Int;
                 } else {
                     sqlType = sql.NVarChar;
                 }
 
-                request.input(field, sqlType, dataToUpdate[field]);
+                request.input(field, sqlType, value);
             });
 
             query += ' WHERE Showtime_ID = @id';
